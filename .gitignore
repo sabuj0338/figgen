@@ -1,0 +1,18 @@
+# Compiled binary
+figgen
+figgen.exe
+
+# Environment variables (NEVER COMMIT API KEYS)
+.env
+
+# Go workspace
+vendor/
+
+# Agent Output directory
+/out/
+scratch/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

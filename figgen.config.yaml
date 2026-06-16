@@ -1,0 +1,22 @@
+framework: nextjs16
+boilerplate_url: "https://github.com/sabuj0338/nextjs-light-boilerplate.git" # Placeholder
+
+dependencies:
+  ui:
+    - shadcn
+    - tailwindcss
+    - lucide-react
+
+  state:
+    - zustand
+    - react-query
+
+  forms:
+    - react-hook-form
+    - zod
+
+rules:
+  - never_edit_shadcn_ui
+  - use_react_query_for_api
+  - use_zustand_only_for_ui
+  - follow_folder_structure
