@@ -19,23 +19,28 @@ type ComponentPlan struct {
 	Description string   `json:"description"`
 	Props       []string `json:"props"`
 	IsShadcn    bool     `json:"is_shadcn"`
+	Category    string   `json:"category"`
 }
 
 type PagePlan struct {
 	Name       string   `json:"name"`
 	Components []string `json:"components"`
+	Category   string   `json:"category"`
 }
 
 func RunPlanner(ctx context.Context, ai LLMProvider, cfg *config.Config, figmaNode *figma.FileResponse) (*PlannerResponse, error) {
-	// Serialize inputs for prompt
-	configJSON, _ := json.MarshalIndent(cfg, "", "  ")
-	figmaJSON, _ := json.Marshal(figmaNode)
+	// Serialize inputs for prompt without indentation to save tokens
+	configJSON, _ := json.Marshal(cfg)
+	figmaJSON, _ := json.Marshal(figmaNode.Document)
 
 	prompt := fmt.Sprintf(`You are an expert Frontend Next.js Architecture Planner.
 Analyze the following Figma Design tree and the provided project configuration.
-Create a structured component generation plan.
+Create a structured component generation plan. Group components and pages into logical modules using the "category" field (e.g. "Authentication", "Dashboard", "Settings"). For shared/generic UI elements, use the category "Global".
 
 Configuration Rules:
+%s
+
+Engineering Guidelines:
 %s
 
 Figma Design JSON:
@@ -48,16 +53,18 @@ Output JSON in this exact structure:
       "name": "Button",
       "description": "Primary action button",
       "props": ["onClick", "variant"],
-      "is_shadcn": true
+      "is_shadcn": true,
+      "category": "Global"
     }
   ],
   "pages": [
     {
       "name": "Dashboard",
-      "components": ["Button", "Sidebar"]
+      "components": ["Button", "Sidebar"],
+      "category": "Dashboard"
     }
   ]
-}`, string(configJSON), string(figmaJSON))
+}`, string(configJSON), cfg.PlannerRulesContent, string(figmaJSON))
 
 	rawJSON, err := ai.GenerateJSON(ctx, prompt)
 	if err != nil {

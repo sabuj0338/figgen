@@ -1,6 +1,11 @@
 framework: nextjs16
-boilerplate_url: "https://github.com/sabuj0338/nextjs-light-boilerplate.git" # Placeholder
-
+boilerplate_url: "https://github.com/sabuj0338/nextjs-light-boilerplate.git"
+package_manager: "pnpm"
+planner_rules:
+  - "./rules/AI_AGENT_RULES.md"
+coder_rules:
+  - "./rules/AI_AGENT_RULES.md"
+  - "./rules/nextjs-project-setup-guide-light.md"
 dependencies:
   ui:
     - shadcn

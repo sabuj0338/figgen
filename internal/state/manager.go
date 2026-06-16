@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/sabujislam/figgen/internal/agents"
 )
@@ -13,6 +14,7 @@ type Task struct {
 	ID        string `json:"id"`
 	Type      string `json:"type"`   // "component" or "page"
 	Name      string `json:"name"`
+	Category  string `json:"category"`
 	Status    string `json:"status"` // "pending", "in_progress", "completed", "failed"
 	IsShadcn  bool   `json:"is_shadcn,omitempty"`
 	
@@ -39,6 +41,7 @@ func InitState(outDir string, plan *agents.PlannerResponse) error {
 			ID:            fmt.Sprintf("comp_%d", i),
 			Type:          "component",
 			Name:          comp.Name,
+			Category:      comp.Category,
 			Status:        "pending",
 			IsShadcn:      comp.IsShadcn,
 			ComponentPlan: &c,
@@ -51,6 +54,7 @@ func InitState(outDir string, plan *agents.PlannerResponse) error {
 			ID:       fmt.Sprintf("page_%d", i),
 			Type:     "page",
 			Name:     page.Name,
+			Category: page.Category,
 			Status:   "pending",
 			PagePlan: &p,
 		})
@@ -91,25 +95,29 @@ func SaveState(outDir string, state *State) error {
 	// Write Markdown tracker
 	mdPath := filepath.Join(stateDir, "tasks.md")
 	mdContent := "# Figma Generation Tasks\n\n"
-	
-	mdContent += "## Components\n"
+
+	// Group tasks by category
+	categories := make(map[string][]Task)
 	for _, t := range state.Tasks {
-		if t.Type == "component" {
-			check := " "
-			if t.Status == "completed" {
-				check = "x"
-			} else if t.Status == "in_progress" {
-				check = "/"
-			} else if t.Status == "failed" {
-				check = "!"
-			}
-			mdContent += fmt.Sprintf("- [%s] Component: %s\n", check, t.Name)
+		cat := t.Category
+		if cat == "" {
+			cat = "Uncategorized"
 		}
+		categories[cat] = append(categories[cat], t)
 	}
 
-	mdContent += "\n## Pages\n"
-	for _, t := range state.Tasks {
-		if t.Type == "page" {
+	// Sort categories alphabetically for deterministic output
+	var sortedCats []string
+	for cat := range categories {
+		sortedCats = append(sortedCats, cat)
+	}
+	sort.Strings(sortedCats)
+
+	for _, cat := range sortedCats {
+		tasks := categories[cat]
+		mdContent += fmt.Sprintf("## %s\n", cat)
+		
+		for _, t := range tasks {
 			check := " "
 			if t.Status == "completed" {
 				check = "x"
@@ -118,8 +126,14 @@ func SaveState(outDir string, state *State) error {
 			} else if t.Status == "failed" {
 				check = "!"
 			}
-			mdContent += fmt.Sprintf("- [%s] Page: %s\n", check, t.Name)
+			
+			if t.Type == "page" {
+				mdContent += fmt.Sprintf("- [%s] Page: %s\n", check, t.Name)
+			} else {
+				mdContent += fmt.Sprintf("- [%s] Component: %s\n", check, t.Name)
+			}
 		}
+		mdContent += "\n"
 	}
 
 	if err := os.WriteFile(mdPath, []byte(mdContent), 0644); err != nil {

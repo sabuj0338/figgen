@@ -15,11 +15,17 @@ type OllamaProvider struct {
 	model   string
 }
 
+type ollamaOptions struct {
+	NumCtx     int `json:"num_ctx"`
+	NumPredict int `json:"num_predict"`
+}
+
 type ollamaRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
-	Format string `json:"format,omitempty"`
+	Model   string         `json:"model"`
+	Prompt  string         `json:"prompt"`
+	Stream  bool           `json:"stream"`
+	Format  string         `json:"format,omitempty"`
+	Options ollamaOptions  `json:"options"`
 }
 
 type ollamaResponse struct {
@@ -47,6 +53,10 @@ func (o *OllamaProvider) GenerateJSON(ctx context.Context, prompt string) (strin
 		Prompt: prompt,
 		Stream: false,
 		Format: "json", // Forces JSON output in modern Ollama versions
+		Options: ollamaOptions{
+			NumCtx:     16384, // Maximize context window for Figma/React syntax
+			NumPredict: 4096,  // Allow massive code outputs without truncation
+		},
 	}
 
 	jsonData, err := json.Marshal(reqBody)

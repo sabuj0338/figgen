@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
-	"fmt"
-	"log"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/sabujislam/figgen/internal/agents"
 	"github.com/sabujislam/figgen/internal/config"
 	"github.com/sabujislam/figgen/internal/filesystem"
+	"github.com/sabujislam/figgen/internal/executor"
+	"github.com/sabujislam/figgen/internal/logger"
 	"github.com/sabujislam/figgen/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +30,7 @@ var runCmd = &cobra.Command{
 		outDir := "./out"
 		cfg, err := config.LoadConfig(runConfigPath)
 		if err != nil {
-			log.Fatalf("Failed to load configuration: %v", err)
+			logger.Fatal("Failed to load configuration: %v", err)
 		}
 
 		ctx := context.Background()
@@ -44,13 +47,13 @@ var runCmd = &cobra.Command{
 
 		aiClient, err := agents.NewProvider(ctx, runProvider, runModel)
 		if err != nil {
-			log.Fatalf("AI Provider initialization failed: %v", err)
+			logger.Fatal("AI Provider initialization failed: %v", err)
 		}
 
 		for {
 			st, err := state.LoadState(outDir)
 			if err != nil {
-				log.Fatalf("Failed to load state: %v. Did you run 'figgen plan' first?", err)
+				logger.Fatal("Failed to load state: %v. Did you run 'figgen plan' first?", err)
 			}
 
 			var targetTask *state.Task
@@ -64,47 +67,90 @@ var runCmd = &cobra.Command{
 			}
 
 			if targetTask == nil {
-				fmt.Println("🎉 All tasks completed!")
+				logger.Success("All tasks completed!")
 				break
 			}
 
-			fmt.Printf("Executing task: %s [%s]\n", targetTask.Name, targetTask.Type)
+			logger.Step("Executing task: %s [%s]", targetTask.Name, targetTask.Type)
 			
 			// Mark as in-progress
 			st.Tasks[taskIndex].Status = "in_progress"
 			state.SaveState(outDir, st)
 
 			// Execute
-			var code string
+			var codeResp *agents.CoderResponse
+			var targetFilePath string
+
 			if targetTask.Type == "component" {
-				code, err = agents.RunCoderForComponent(ctx, aiClient, cfg, *targetTask.ComponentPlan)
-				if err == nil {
-					err = filesystem.WriteComponent(outDir, targetTask.Name, targetTask.IsShadcn, code)
+				if targetTask.IsShadcn {
+					// Skip AI generation for shadcn components, just install it
+					codeResp = &agents.CoderResponse{
+						ShadcnComponents: []string{strings.ToLower(targetTask.Name)},
+						Translations:     make(map[string]interface{}),
+					}
+					targetFilePath = "" // No specific file to format since it's shadcn
+				} else {
+					codeResp, err = agents.RunCoderForComponent(ctx, aiClient, cfg, *targetTask.ComponentPlan)
+					if err == nil {
+						targetFilePath, err = filesystem.WriteComponent(outDir, targetTask.Name, targetTask.IsShadcn, codeResp.Code)
+					}
 				}
 			} else {
-				code, err = agents.RunCoderForPage(ctx, aiClient, cfg, *targetTask.PagePlan)
+				codeResp, err = agents.RunCoderForPage(ctx, aiClient, cfg, *targetTask.PagePlan)
 				if err == nil {
-					err = filesystem.WritePage(outDir, targetTask.Name, code)
+					targetFilePath, err = filesystem.WritePage(outDir, targetTask.Name, codeResp.Code)
+				}
+			}
+
+			// Post-Generation Processing (Executor)
+			if err == nil && codeResp != nil {
+				_ = executor.InstallDependencies(outDir, cfg.PackageManager, codeResp.Dependencies)
+				_ = executor.InstallShadcn(outDir, cfg.PackageManager, codeResp.ShadcnComponents)
+				if targetFilePath != "" {
+					_ = executor.LintFile(outDir, cfg.PackageManager, targetFilePath)
+				}
+				
+				// Inject Translations into en.json
+				if len(codeResp.Translations) > 0 {
+					errTrans := filesystem.InjectTranslations(outDir, targetTask.Name, codeResp.Translations)
+					if errTrans != nil {
+						logger.Warn("Failed to inject translations for %s: %v", targetTask.Name, errTrans)
+					}
 				}
 			}
 
 			if err != nil {
-				fmt.Printf("❌ Task %s failed: %v\n", targetTask.Name, err)
+				logger.Error("Task %s failed: %v", targetTask.Name, err)
 				st.Tasks[taskIndex].Status = "failed"
 				state.SaveState(outDir, st)
 				
 				if !runAll {
 					break
 				}
+
+				logger.Prompt("Task failed. Do you want to continue executing the remaining tasks? (y/N): ")
+				reader := bufio.NewReader(os.Stdin)
+				response, _ := reader.ReadString('\n')
+				response = strings.TrimSpace(strings.ToLower(response))
+				if response != "y" && response != "yes" {
+					logger.Warn("Stopping execution.")
+					break
+				}
 			} else {
-				fmt.Printf("✅ Task %s completed!\n", targetTask.Name)
+				logger.Success("Task %s completed!", targetTask.Name)
 				st.Tasks[taskIndex].Status = "completed"
 				state.SaveState(outDir, st)
 			}
 
 			if !runAll {
-				fmt.Println("Run 'figgen run' again to execute the next task, or 'figgen run --all' to execute all.")
+				logger.Info("Run 'figgen run' again to execute the next task, or 'figgen run --all' to execute all.")
 				break
+			}
+
+			// Respect Gemini free tier limits (15 Requests Per Minute)
+			if runProvider == "gemini" {
+				logger.Info("Waiting 4 seconds to respect Gemini API free-tier rate limits...")
+				time.Sleep(4 * time.Second)
 			}
 		}
 	},

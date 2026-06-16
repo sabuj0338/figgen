@@ -3,6 +3,7 @@
 Figgen is an advanced, stateful CLI tool that automatically converts Figma designs into production-ready Next.js repositories using Google's Gemini AI. It acts as a multi-agent system, extracting design nodes, planning the React component architecture, and writing clean, structured code into a target boilerplate.
 
 ## 🌟 Features
+
 - **Stateful Execution:** Uses an agentic `plan` and `run` workflow. If the AI errors out or hits a rate limit, you don't lose your progress. You can resume generation right where it left off.
 - **Direct Figma Integration:** Uses the Figma REST API to extract raw design trees automatically—no manual exporting required.
 - **Smart Architecture:** Analyzes your design to determine what needs to be a reusable component, a shadcn/ui generic component, or a full page.
@@ -18,6 +19,7 @@ cp .env.example .env
 ```
 
 Then, open `.env` and add your API keys:
+
 ```env
 # Required for Gemini models
 GEMINI_API_KEY="your_google_ai_studio_key"
@@ -44,16 +46,21 @@ FIGMA_TOKEN="your_figma_personal_access_token"
 ## 🚀 How to Run
 
 ### Step 1: Build the CLI
+
 Compile the Go program into a binary.
+
 ```bash
 go build -o figgen
 ```
 
 ### Step 2: Configure
+
 Ensure your `figgen.config.yaml` is present in the root directory. This tells the AI what framework you are using and what boilerplate repository to clone.
 
 ### Step 3: Plan the Architecture
+
 Run the `plan` command. This will:
+
 1. Clone the boilerplate to `./out`.
 2. Extract the design from your Figma URL.
 3. Run the AI Planner to map the architecture.
@@ -61,13 +68,14 @@ Run the `plan` command. This will:
 
 ```bash
 # Step 1: Clone repo, extract figma, and generate tasks.md
-./figgen plan --figma "https://www.figma.com/design/your_file_id/DesignName"
+./figgen plan
 
 # Use a different LLM provider:
 ./figgen plan --figma "<url>" --provider anthropic --model claude-3-5-sonnet-20240620
 ```
 
 ### Step 4: Execute the Tasks
+
 Run the `run` command to start the AI Coder. It will read the `tasks.json` state, pick the first uncompleted task, generate the React code, and write it to the filesystem (e.g., `src/components/ui/Button.tsx`).
 
 ```bash

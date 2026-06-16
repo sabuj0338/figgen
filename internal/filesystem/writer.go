@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,7 +9,7 @@ import (
 )
 
 // WriteComponent writes the generated React component code to the appropriate file path.
-func WriteComponent(outDir string, name string, isShadcn bool, code string) error {
+func WriteComponent(outDir string, name string, isShadcn bool, code string) (string, error) {
 	var targetDir string
 	if isShadcn {
 		targetDir = filepath.Join(outDir, "src", "components", "ui")
@@ -17,19 +18,19 @@ func WriteComponent(outDir string, name string, isShadcn bool, code string) erro
 	}
 
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", targetDir, err)
+		return "", fmt.Errorf("failed to create directory %s: %w", targetDir, err)
 	}
 
 	filePath := filepath.Join(targetDir, fmt.Sprintf("%s.tsx", name))
 	if err := os.WriteFile(filePath, []byte(code), 0644); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", filePath, err)
+		return "", fmt.Errorf("failed to write file %s: %w", filePath, err)
 	}
 
-	return nil
+	return filePath, nil
 }
 
 // WritePage writes the generated Next.js page code.
-func WritePage(outDir string, routeName string, code string) error {
+func WritePage(outDir string, routeName string, code string) (string, error) {
 	// For Next.js app router, routeName like "Dashboard" might map to "src/app/dashboard/page.tsx"
 	
 	// Default route mapping (e.g., Home -> src/app/page.tsx)
@@ -39,13 +40,107 @@ func WritePage(outDir string, routeName string, code string) error {
 	}
 
 	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %s: %w", targetDir, err)
+		return "", fmt.Errorf("failed to create directory %s: %w", targetDir, err)
 	}
 
 	filePath := filepath.Join(targetDir, "page.tsx")
 	if err := os.WriteFile(filePath, []byte(code), 0644); err != nil {
-		return fmt.Errorf("failed to write file %s: %w", filePath, err)
+		return "", fmt.Errorf("failed to write file %s: %w", filePath, err)
 	}
 
-	return nil
+	return filePath, nil
+}
+
+// InjectTranslations merges AI generated translations into en.json
+func InjectTranslations(outDir string, namespace string, newTranslations map[string]interface{}) error {
+	messagesPath := filepath.Join(outDir, "src", "messages", "en.json")
+	
+	// Read existing JSON
+	data, err := os.ReadFile(messagesPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			data = []byte("{}")
+		} else {
+			return err
+		}
+	}
+
+	var messages map[string]interface{}
+	if err := json.Unmarshal(data, &messages); err != nil {
+		return fmt.Errorf("invalid json in en.json: %w", err)
+	}
+
+	// Helper function to unflatten dot-notation keys and merge into target
+	var unflattenAndMerge func(target map[string]interface{}, source map[string]interface{})
+	unflattenAndMerge = func(target map[string]interface{}, source map[string]interface{}) {
+		for k, v := range source {
+			keys := strings.Split(k, ".")
+			current := target
+			for i := 0; i < len(keys)-1; i++ {
+				key := keys[i]
+				if current[key] == nil {
+					current[key] = make(map[string]interface{})
+				}
+				if nextMap, ok := current[key].(map[string]interface{}); ok {
+					current = nextMap
+				} else {
+					// Overwrite if it was a string but now needs to be an object
+					newMap := make(map[string]interface{})
+					current[key] = newMap
+					current = newMap
+				}
+			}
+			
+			lastKey := keys[len(keys)-1]
+			if vMap, ok := v.(map[string]interface{}); ok {
+				if current[lastKey] == nil {
+					current[lastKey] = make(map[string]interface{})
+				}
+				if targetMap, ok := current[lastKey].(map[string]interface{}); ok {
+					unflattenAndMerge(targetMap, vMap)
+				} else {
+					current[lastKey] = vMap
+				}
+			} else {
+				current[lastKey] = v
+			}
+		}
+	}
+
+	// If the AI returned nested objects, we should merge them at the root
+	// If the AI returned a flat map, we should probably nest it under the component name (namespace)
+	hasNestedObjects := false
+	for _, v := range newTranslations {
+		if _, ok := v.(map[string]interface{}); ok {
+			hasNestedObjects = true
+			break
+		}
+	}
+
+	if hasNestedObjects {
+		// AI provided namespaces, unflatten and merge at root
+		unflattenAndMerge(messages, newTranslations)
+	} else {
+		// Flat map, nest it under the namespace
+		ns := strings.ToLower(namespace)
+		if messages[ns] == nil {
+			messages[ns] = make(map[string]interface{})
+		}
+		
+		nsMap, ok := messages[ns].(map[string]interface{})
+		if !ok {
+			nsMap = make(map[string]interface{})
+			messages[ns] = nsMap
+		}
+		
+		unflattenAndMerge(nsMap, newTranslations)
+	}
+
+	// Write back
+	outBytes, err := json.MarshalIndent(messages, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(messagesPath, outBytes, 0644)
 }
