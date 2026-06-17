@@ -111,12 +111,15 @@ type ImageResponse struct {
 }
 
 // FetchImageURLs fetches the render URLs for specific nodes
-func (c *Client) FetchImageURLs(fileKey string, nodeIDs []string) (map[string]string, error) {
+func (c *Client) FetchImageURLs(fileKey string, nodeIDs []string, format string) (map[string]string, error) {
 	if len(nodeIDs) == 0 {
 		return make(map[string]string), nil
 	}
+	if format == "" {
+		format = "png"
+	}
 
-	url := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=png", fileKey, strings.Join(nodeIDs, ","))
+	url := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=%s", fileKey, strings.Join(nodeIDs, ","), format)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -146,10 +149,13 @@ func (c *Client) FetchImageURLs(fileKey string, nodeIDs []string) (map[string]st
 	return imageResp.Images, nil
 }
 
-// DownloadImages downloads a map of image URLs to the specified directory
-func (c *Client) DownloadImages(images map[string]string, destDir string) error {
+// DownloadImages downloads a map of image URLs to the specified directory with the given extension
+func (c *Client) DownloadImages(images map[string]string, destDir string, ext string) error {
 	if len(images) == 0 {
 		return nil
+	}
+	if ext == "" {
+		ext = "png"
 	}
 
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -169,7 +175,7 @@ func (c *Client) DownloadImages(images map[string]string, destDir string) error 
 		
 		// Clean the ID for filename (e.g. "0:1" -> "0_1")
 		safeID := strings.ReplaceAll(id, ":", "_")
-		filePath := fmt.Sprintf("%s/%s.png", destDir, safeID)
+		filePath := fmt.Sprintf("%s/%s.%s", destDir, safeID, ext)
 		
 		file, err := os.Create(filePath)
 		if err != nil {

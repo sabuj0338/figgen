@@ -116,6 +116,7 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 
 						// 2. Extremely simple local recursive image finder on map[string]interface{}
 						var imageNodes []string
+						var svgNodes []string
 						var findImages func(node map[string]interface{})
 						findImages = func(node map[string]interface{}) {
 							isImage := false
@@ -148,28 +149,26 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 
 						findImages(foundNode)
 
-						// If the task name suggests it is an illustration, image, graphic, or logo, export the entire component as an image.
+						// If the task name suggests it is an icon or logo, export it as an SVG.
 						nameLower := strings.ToLower(targetTask.Name)
-						if strings.Contains(nameLower, "illustration") || strings.Contains(nameLower, "image") || strings.Contains(nameLower, "graphic") || strings.Contains(nameLower, "logo") {
-							found := false
-							for _, id := range imageNodes {
-								if id == targetTask.FigmaNodeID {
-									found = true
-									break
-								}
+						if strings.Contains(nameLower, "icon") || strings.Contains(nameLower, "logo") {
+							if targetTask.FigmaNodeID != "" {
+								svgNodes = append(svgNodes, targetTask.FigmaNodeID)
 							}
-							if !found && targetTask.FigmaNodeID != "" {
+						} else if strings.Contains(nameLower, "illustration") || strings.Contains(nameLower, "image") || strings.Contains(nameLower, "graphic") {
+							// If it's an illustration, image, or graphic, prefer PNG
+							if targetTask.FigmaNodeID != "" {
 								imageNodes = append(imageNodes, targetTask.FigmaNodeID)
 							}
 						}
 
-						// Now download images if we found any using the standard FetchImageURLs API
+						// Now download PNG images
 						if len(imageNodes) > 0 && figmaClient != nil && st.FigmaFileKey != "" && st.FigmaFileKey != "local" {
-							logger.Step("Found %d image nodes locally, fetching from Figma...", len(imageNodes))
-							imgURLs, err := figmaClient.FetchImageURLs(st.FigmaFileKey, imageNodes)
+							logger.Step("Found %d image nodes, fetching PNGs from Figma...", len(imageNodes))
+							imgURLs, err := figmaClient.FetchImageURLs(st.FigmaFileKey, imageNodes, "png")
 							if err == nil {
 								imgDir := outDir + "/public/images"
-								err = figmaClient.DownloadImages(imgURLs, imgDir)
+								err = figmaClient.DownloadImages(imgURLs, imgDir, "png")
 								if err == nil {
 									for id := range imgURLs {
 										safeID := strings.ReplaceAll(id, ":", "_")
@@ -178,6 +177,24 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 								}
 							} else {
 								logger.Warn("Failed to fetch image URLs: %v", err)
+							}
+						}
+
+						// Now download SVG images (icons, illustrations, logos)
+						if len(svgNodes) > 0 && figmaClient != nil && st.FigmaFileKey != "" && st.FigmaFileKey != "local" {
+							logger.Step("Found %d vector nodes, fetching SVGs from Figma...", len(svgNodes))
+							svgURLs, err := figmaClient.FetchImageURLs(st.FigmaFileKey, svgNodes, "svg")
+							if err == nil {
+								imgDir := outDir + "/public/images"
+								err = figmaClient.DownloadImages(svgURLs, imgDir, "svg")
+								if err == nil {
+									for id := range svgURLs {
+										safeID := strings.ReplaceAll(id, ":", "_")
+										availableImages = append(availableImages, safeID+".svg")
+									}
+								}
+							} else {
+								logger.Warn("Failed to fetch SVG URLs: %v", err)
 							}
 						}
 					}

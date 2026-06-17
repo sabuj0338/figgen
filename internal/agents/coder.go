@@ -24,8 +24,10 @@ Do NOT output markdown formatting like "` + "```tsx" + `". ONLY output pure JSON
 Identify any external NPM dependencies you use (like "date-fns" or "lucide-react") and any shadcn/ui components you import (like "button" or "calendar").
 CRITICAL: For navigation, strictly use "import Link from 'next/link'" and "import { useRouter } from 'next/navigation'". Do NOT use @/i18n/navigation.
 CRITICAL: If you use next-intl useTranslations(), provide the English text used for each key in the "translations" map.
-CRITICAL: Available images downloaded for this task: %v. Use standard HTML <img src="/images/filename.png" /> for these. If you need an image/icon that is not in the available list: for icons use 'lucide-react', for complex illustrations use <img src="/placeholder.svg" />.
+CRITICAL: Available images/vectors downloaded for this task: %v. Use standard HTML <img src="/images/filename.svg" /> or <img src="/images/filename.png" /> for these. If you need an icon that is NOT in the available list, use 'lucide-react'. For unknown illustrations, use <img src="/placeholder.svg" />.
 CRITICAL: Figma provides layout data like "layoutMode" (HORIZONTAL=flex-row, VERTICAL=flex-col), "primaryAxisAlignItems" (justify-content), "counterAxisAlignItems" (align-items), and exact padding/gap ("itemSpacing"). You MUST strictly map these to Tailwind flex utilities (e.g., flex, flex-col, justify-between, items-center, gap-X, p-X) to match the exact design alignment.
+CRITICAL: Figma provides text styling under "style" (e.g., fontSize, fontWeight, fontFamily, letterSpacing, lineHeightPx). You MUST map these precisely to Tailwind text classes (e.g., text-[16px], font-semibold, leading-[24px], tracking-wide).
+CRITICAL: For shapes, inputs, and buttons, map Figma "cornerRadius", "fills", and "strokes" to Tailwind border-radius, background, and border classes (e.g., rounded-md, bg-[#FF0000], border border-[#00FF00]).
 CRITICAL: Figma provides colors in RGB format from 0 to 1 (e.g., {"r": 0.5, "g": 0.5, "b": 0.5}). You MUST convert these to HEX and use Tailwind arbitrary values (e.g., bg-[#808080], text-[#808080]).
 CRITICAL: Do NOT render the entire page or layout as a single <img> tag. You MUST build the UI structure (headers, text, buttons, layouts) using standard HTML elements and Tailwind CSS.
 
@@ -74,8 +76,10 @@ Do NOT output markdown formatting like "` + "```tsx" + `". ONLY output pure JSON
 Identify any external NPM dependencies you use (like "date-fns" or "lucide-react") and any shadcn/ui components you import (like "button" or "calendar").
 CRITICAL: For navigation, strictly use "import Link from 'next/link'" and "import { useRouter } from 'next/navigation'". Do NOT use @/i18n/navigation.
 CRITICAL: If you use next-intl useTranslations(), provide the English text used for each key in the "translations" map.
-CRITICAL: Available images downloaded for this task: %v. Use standard HTML <img src="/images/filename.png" /> for these. If you need an image/icon that is not in the available list: for icons use 'lucide-react', for complex illustrations use <img src="/placeholder.svg" />.
+CRITICAL: Available images/vectors downloaded for this task: %v. Use standard HTML <img src="/images/filename.svg" /> or <img src="/images/filename.png" /> for these. If you need an icon that is NOT in the available list, use 'lucide-react'. For unknown illustrations, use <img src="/placeholder.svg" />.
 CRITICAL: Figma provides layout data like "layoutMode" (HORIZONTAL=flex-row, VERTICAL=flex-col), "primaryAxisAlignItems" (justify-content), "counterAxisAlignItems" (align-items), and exact padding/gap ("itemSpacing"). You MUST strictly map these to Tailwind flex utilities (e.g., flex, flex-col, justify-between, items-center, gap-X, p-X) to match the exact design alignment.
+CRITICAL: Figma provides text styling under "style" (e.g., fontSize, fontWeight, fontFamily, letterSpacing, lineHeightPx). You MUST map these precisely to Tailwind text classes (e.g., text-[16px], font-semibold, leading-[24px], tracking-wide).
+CRITICAL: For shapes, inputs, and buttons, map Figma "cornerRadius", "fills", and "strokes" to Tailwind border-radius, background, and border classes (e.g., rounded-md, bg-[#FF0000], border border-[#00FF00]).
 CRITICAL: Figma provides colors in RGB format from 0 to 1 (e.g., {"r": 0.5, "g": 0.5, "b": 0.5}). You MUST convert these to HEX and use Tailwind arbitrary values (e.g., bg-[#808080], text-[#808080]).
 CRITICAL: Do NOT render the entire page or layout as a single <img> tag. You MUST build the UI structure (headers, text, buttons, layouts) using standard HTML elements and Tailwind CSS.
 

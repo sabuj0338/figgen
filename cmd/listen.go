@@ -131,8 +131,12 @@ var listenCmd = &cobra.Command{
 				
 				if response == "r" || response == "run" {
 					ExecuteRun(outDir, false, listenConfigPath, listenProvider, listenModel)
+					logger.Success("Generation finished. Exiting.")
+					os.Exit(0)
 				} else if response == "a" || response == "all" {
 					ExecuteRun(outDir, true, listenConfigPath, listenProvider, listenModel)
+					logger.Success("Generation finished. Exiting.")
+					os.Exit(0)
 				} else {
 					logger.Info("Skipped generation. Waiting for more design payloads on WebSocket...")
 				}
