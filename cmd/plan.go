@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 
 	"github.com/sabujislam/figgen/internal/agents"
@@ -9,6 +10,7 @@ import (
 	"github.com/sabujislam/figgen/internal/figma"
 	"github.com/sabujislam/figgen/internal/github"
 	"github.com/sabujislam/figgen/internal/logger"
+	"github.com/sabujislam/figgen/internal/mcp"
 	"github.com/sabujislam/figgen/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -39,7 +41,7 @@ var planCmd = &cobra.Command{
 			logger.Fatal("Failed to load configuration: %v", err)
 		}
 
-		outDir := "./out" // Default output directory
+		outDir := globalOutDir
 		if cfg.BoilerplateURL != "" {
 			err = github.CloneRepository(cfg.BoilerplateURL, outDir)
 			if err != nil {
@@ -57,11 +59,7 @@ var planCmd = &cobra.Command{
 			logger.Fatal("Invalid Figma URL: %v", err)
 		}
 
-		logger.Step("Fetching Figma file %s (node: %s)...", fileKey, nodeID)
-		fileData, err := figmaClient.FetchFile(fileKey, nodeID)
-		if err != nil {
-			logger.Fatal("Failed to fetch Figma data: %v", err)
-		}
+
 
 		ctx := context.Background()
 		
@@ -80,100 +78,117 @@ var planCmd = &cobra.Command{
 			logger.Fatal("AI Provider initialization failed: %v", err)
 		}
 
-		// Extract images before compression
-		logger.Step("Extracting images from Figma...")
-		var imageNodes []string
-		var findImages func(nodes []figma.Node)
-		findImages = func(nodes []figma.Node) {
-			for _, n := range nodes {
-				isImage := false
-				for _, fill := range n.Fills {
-					if fill.Type == "IMAGE" {
-						isImage = true
-						break
-					}
-				}
-				if isImage && n.ID != "" {
-					imageNodes = append(imageNodes, n.ID)
-				}
-				if len(n.Children) > 0 {
-					findImages(n.Children)
-				}
-			}
+		logger.Step("Connecting to Figma MCP Server for semantic context...")
+		mcpClient, err := mcp.NewClient("npx", []string{"-y", "figma-developer-mcp", "--stdio", "--figma-api-key", figmaClient.Token}, nil)
+		if err != nil {
+			logger.Fatal("Failed to start MCP client: %v", err)
 		}
-		findImages(fileData.Document.Children)
+		defer mcpClient.Close()
+		
+		err = mcpClient.Initialize(ctx)
+		if err != nil {
+			logger.Fatal("Failed to initialize MCP client: %v", err)
+		}
 
-		if len(imageNodes) > 0 {
-			logger.Info("Found %d image nodes, downloading...", len(imageNodes))
-			// Fetch URLs
-			imgURLs, err := figmaClient.FetchImageURLs(fileKey, imageNodes)
+		logger.Step("Fetching semantic design context via MCP...")
+		mcpArgs := map[string]interface{}{
+			"fileKey": fileKey,
+			"depth":   1, // Fetch top-level structural layout first
+		}
+		if nodeID != "" {
+			mcpArgs["nodeId"] = nodeID
+		}
+
+		mcpResultBytes, err := mcpClient.Call(ctx, "tools/call", map[string]interface{}{
+			"name":      "get_figma_data",
+			"arguments": mcpArgs,
+		})
+		if err != nil {
+			logger.Fatal("MCP get_figma_data failed: %v", err)
+		}
+
+		var mcpResult struct {
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			IsError bool `json:"isError"`
+		}
+		if err := json.Unmarshal(mcpResultBytes, &mcpResult); err != nil {
+			logger.Fatal("Failed to parse MCP result: %v", err)
+		}
+
+		var rawYAML string
+		if len(mcpResult.Content) > 0 {
+			rawYAML = mcpResult.Content[0].Text
+		}
+
+		childIDs, err := figma.ExtractChildIDs(rawYAML)
+		if err != nil {
+			logger.Info("Failed to extract children IDs from YAML: %v", err)
+		}
+
+		// If no children were found, fall back to just processing the selected node ID itself
+		targetIDs := childIDs
+		if len(targetIDs) == 0 {
+			targetIDs = []string{nodeID}
+		}
+
+		logger.Step("Identified %d structural segments to plan. Running Architecture Planner...", len(targetIDs))
+
+		masterPlan := &agents.PlannerResponse{}
+
+		for i, id := range targetIDs {
+			logger.Info("Planning chunk %d/%d (Node %s)...", i+1, len(targetIDs), id)
+			chunkArgs := map[string]interface{}{
+				"fileKey": fileKey,
+				"depth":   2,
+				"nodeId":  id,
+			}
+			chunkBytes, err := mcpClient.Call(ctx, "tools/call", map[string]interface{}{
+				"name":      "get_figma_data",
+				"arguments": chunkArgs,
+			})
 			if err != nil {
-				logger.Warn("Failed to fetch image URLs: %v", err)
-			} else {
-				// Download them
-				err = figmaClient.DownloadImages(imgURLs, outDir+"/public/images")
-				if err != nil {
-					logger.Warn("Failed to download images: %v", err)
-				} else {
-					logger.Success("Images downloaded successfully to %s/public/images", outDir)
-				}
+				logger.Info("Warning: Failed to fetch chunk %s: %v", id, err)
+				continue
 			}
-		}
 
-		// Aggressively compress Figma JSON to save tokens
-		var compressFigmaTree func(nodes []figma.Node) []figma.Node
-		compressFigmaTree = func(nodes []figma.Node) []figma.Node {
-			var compressed []figma.Node
-			for _, n := range nodes {
-				// Skip purely decorative/vector nodes that don't represent structural UI
-				if n.Type == "VECTOR" || n.Type == "STAR" || n.Type == "LINE" || n.Type == "ELLIPSE" || n.Type == "REGULAR_POLYGON" {
+			var chunkResult struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			}
+			json.Unmarshal(chunkBytes, &chunkResult)
+
+			if len(chunkResult.Content) > 0 {
+				chunkRaw := chunkResult.Content[0].Text
+				prunedJSON, err := figma.PruneFigmaData(chunkRaw)
+				if err != nil {
+					prunedJSON = chunkRaw
+				}
+
+				plan, err := agents.RunPlanner(ctx, aiClient, cfg, prunedJSON)
+				if err != nil {
+					logger.Info("Warning: AI Planner failed for chunk %s: %v", id, err)
 					continue
 				}
-				
-				// Strip ID to save tokens
-				n.ID = ""
-				
-				// Keep only crucial typography hints from Style, discard the rest
-				if n.Style != nil {
-					filteredStyle := make(map[string]interface{})
-					if fontSize, ok := n.Style["fontSize"]; ok {
-						filteredStyle["fontSize"] = fontSize
-					}
-					if fontWeight, ok := n.Style["fontWeight"]; ok {
-						filteredStyle["fontWeight"] = fontWeight
-					}
-					if textAlign, ok := n.Style["textAlignHorizontal"]; ok {
-						filteredStyle["textAlignHorizontal"] = textAlign
-					}
-					
-					if len(filteredStyle) > 0 {
-						n.Style = filteredStyle
-					} else {
-						n.Style = nil
-					}
+
+				// Merge into master plan
+				if plan != nil {
+					masterPlan.Components = append(masterPlan.Components, plan.Components...)
+					masterPlan.Pages = append(masterPlan.Pages, plan.Pages...)
 				}
-				if len(n.Children) > 0 {
-					n.Children = compressFigmaTree(n.Children)
-				}
-				compressed = append(compressed, n)
 			}
-			return compressed
-		}
-		
-		fileData.Document.Children = compressFigmaTree(fileData.Document.Children)
-
-		logger.Step("Running Architecture Planner...")
-		plan, err := agents.RunPlanner(ctx, aiClient, cfg, fileData)
-		if err != nil {
-			logger.Fatal("AI Planner failed: %v", err)
 		}
 
-		err = state.InitState(outDir, plan)
+		err = state.InitState(outDir, fileKey, masterPlan)
 		if err != nil {
 			logger.Fatal("Failed to save state: %v", err)
 		}
 
-		logger.Success("Planning complete! Identified %d components and %d pages.", len(plan.Components), len(plan.Pages))
+		logger.Success("Planning complete! Identified %d components and %d pages.", len(masterPlan.Components), len(masterPlan.Pages))
 		logger.Info("Check ./out/.figgen/tasks.md and then execute 'figgen run' to begin generation.")
 	},
 }

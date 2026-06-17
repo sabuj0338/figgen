@@ -2,7 +2,7 @@ framework: nextjs16
 boilerplate_url: "https://github.com/sabuj0338/nextjs-light-boilerplate.git"
 package_manager: "pnpm"
 planner_rules:
-  - "./rules/AI_AGENT_RULES.md"
+  - "rules/planning_rules_summary.md"
 coder_rules:
   - "./rules/AI_AGENT_RULES.md"
   - "./rules/nextjs-project-setup-guide-light.md"
@@ -25,3 +25,9 @@ rules:
   - use_react_query_for_api
   - use_zustand_only_for_ui
   - follow_folder_structure
+  # translation rules (i18next)
+  - must_add_text_into_translation_file
+  - update_component_to_work_with_translation_file
+
+  # css rules
+  - use_tailwind_css

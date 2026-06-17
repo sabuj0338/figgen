@@ -26,7 +26,6 @@ func NewGeminiProvider(ctx context.Context, modelName string) (*GeminiProvider, 
 	}
 
 	model := client.GenerativeModel(modelName)
-	model.ResponseMIMEType = "application/json"
 
 	return &GeminiProvider{
 		client: client,
@@ -44,10 +43,18 @@ func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string) (strin
 		return "", fmt.Errorf("no response from Gemini")
 	}
 
-	part := resp.Candidates[0].Content.Parts[0]
-	if txt, ok := part.(genai.Text); ok {
-		return CleanJSONResponse(string(txt)), nil
+	var fullText string
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if txt, ok := part.(genai.Text); ok {
+			fullText += string(txt)
+		}
+	}
+	
+	if fullText == "" {
+		return "", fmt.Errorf("unexpected AI response format")
 	}
 
-	return "", fmt.Errorf("unexpected AI response format")
+	os.WriteFile("debug_fulltext.txt", []byte(fullText), 0644)
+
+	return CleanJSONResponse(fullText), nil
 }

@@ -24,6 +24,7 @@ type openAIRequest struct {
 	Model          string                 `json:"model"`
 	Messages       []openAIMessage        `json:"messages"`
 	ResponseFormat map[string]interface{} `json:"response_format,omitempty"`
+	MaxTokens      int                    `json:"max_tokens,omitempty"`
 }
 
 type openAIResponse struct {
@@ -56,9 +57,7 @@ func (o *OpenAIProvider) GenerateJSON(ctx context.Context, prompt string) (strin
 			{Role: "system", Content: "You are an expert AI software architect and coder. You MUST respond with ONLY valid JSON."},
 			{Role: "user", Content: prompt},
 		},
-		ResponseFormat: map[string]interface{}{
-			"type": "json_object",
-		},
+		MaxTokens: 8192,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -66,7 +65,15 @@ func (o *OpenAIProvider) GenerateJSON(ctx context.Context, prompt string) (strin
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonData))
+	baseURL := os.Getenv("OPENAI_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	reqURL := baseURL + "/chat/completions"
+
+	fmt.Printf("DEBUG: Using baseURL: %s\n", baseURL)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}

@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +12,8 @@ import (
 	"github.com/sabujislam/figgen/internal/config"
 	"github.com/sabujislam/figgen/internal/filesystem"
 	"github.com/sabujislam/figgen/internal/executor"
+	"github.com/sabujislam/figgen/internal/figma"
+	"github.com/sabujislam/figgen/internal/github"
 	"github.com/sabujislam/figgen/internal/logger"
 	"github.com/sabujislam/figgen/internal/state"
 	"github.com/spf13/cobra"
@@ -27,133 +30,237 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Execute tasks from the state file",
 	Run: func(cmd *cobra.Command, args []string) {
-		outDir := "./out"
-		cfg, err := config.LoadConfig(runConfigPath)
+		ExecuteRun(globalOutDir, runAll, runConfigPath, runProvider, runModel)
+	},
+}
+
+func ExecuteRun(outDir string, isAll bool, configPath string, provider string, model string) {
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		logger.Fatal("Failed to load configuration: %v", err)
+	}
+
+	if cfg.BoilerplateURL != "" {
+		err = github.CloneRepository(cfg.BoilerplateURL, outDir)
 		if err != nil {
-			logger.Fatal("Failed to load configuration: %v", err)
+			logger.Fatal("Failed to clone boilerplate: %v", err)
 		}
+	}
 
-		ctx := context.Background()
-		
-		if runProvider == "" {
-			runProvider = os.Getenv("DEFAULT_PROVIDER")
-			if runProvider == "" {
-				runProvider = "gemini"
-			}
-		}
-		if runModel == "" {
-			runModel = os.Getenv("DEFAULT_MODEL")
-		}
+	ctx := context.Background()
 
-		aiClient, err := agents.NewProvider(ctx, runProvider, runModel)
+	if provider == "" {
+		provider = os.Getenv("DEFAULT_PROVIDER")
+		if provider == "" {
+			provider = "gemini"
+		}
+	}
+	if model == "" {
+		model = os.Getenv("DEFAULT_MODEL")
+	}
+
+	aiClient, err := agents.NewProvider(ctx, provider, model)
+	if err != nil {
+		logger.Fatal("AI Provider initialization failed: %v", err)
+	}
+
+	figmaClient, _ := figma.NewClient()
+
+	for {
+		st, err := state.LoadState(outDir)
 		if err != nil {
-			logger.Fatal("AI Provider initialization failed: %v", err)
+			logger.Fatal("Failed to load state: %v. Did you run 'figgen plan' first?", err)
 		}
 
-		for {
-			st, err := state.LoadState(outDir)
-			if err != nil {
-				logger.Fatal("Failed to load state: %v. Did you run 'figgen plan' first?", err)
-			}
-
-			var targetTask *state.Task
-			var taskIndex int
-			for i, t := range st.Tasks {
-				if t.Status == "pending" {
-					targetTask = &st.Tasks[i]
-					taskIndex = i
-					break
-				}
-			}
-
-			if targetTask == nil {
-				logger.Success("All tasks completed!")
+		var targetTask *state.Task
+		var taskIndex int
+		for i, t := range st.Tasks {
+			if t.Status == "pending" {
+				targetTask = &st.Tasks[i]
+				taskIndex = i
 				break
 			}
+		}
 
-			logger.Step("Executing task: %s [%s]", targetTask.Name, targetTask.Type)
-			
-			// Mark as in-progress
-			st.Tasks[taskIndex].Status = "in_progress"
+		if targetTask == nil {
+			logger.Success("All tasks completed!")
+			break
+		}
+
+		logger.Step("Executing task: %s [%s]", targetTask.Name, targetTask.Type)
+
+		// 1. Mark as in-progress
+		st.Tasks[taskIndex].Status = "in_progress"
+		state.SaveState(outDir, st)
+
+		// Extract images and fetch compressed context if FigmaNodeID is present
+		var availableImages []string
+		var mcpContext string
+
+		// 1. Build MCP Context for this node locally from figma_context.json
+		if targetTask.FigmaNodeID != "" {
+			contextFile := outDir + "/.figgen/figma_context.json"
+			contextData, err := os.ReadFile(contextFile)
+			if err == nil {
+				var root map[string]interface{}
+				if json.Unmarshal(contextData, &root) == nil {
+					foundNode := figma.FindNodeByID(root, targetTask.FigmaNodeID)
+					if foundNode != nil {
+						nodeBytes, _ := json.Marshal(foundNode)
+						prunedCtx, err := figma.PruneForCoder(string(nodeBytes))
+						if err == nil {
+							mcpContext = prunedCtx
+						} else {
+							mcpContext = string(nodeBytes)
+						}
+
+						// 2. Extremely simple local recursive image finder on map[string]interface{}
+						var imageNodes []string
+						var findImages func(node map[string]interface{})
+						findImages = func(node map[string]interface{}) {
+							isImage := false
+							if fills, ok := node["fills"].([]interface{}); ok {
+								for _, fillRaw := range fills {
+									if fill, ok := fillRaw.(map[string]interface{}); ok {
+										if fillType, ok := fill["type"].(string); ok && fillType == "IMAGE" {
+											isImage = true
+											break
+										}
+									}
+								}
+							}
+
+							nodeID, _ := node["id"].(string)
+
+							// Prevent the main target node itself from being downloaded as an image
+							if isImage && nodeID != "" && nodeID != targetTask.FigmaNodeID {
+								imageNodes = append(imageNodes, nodeID)
+							}
+
+							if children, ok := node["children"].([]interface{}); ok {
+								for _, childRaw := range children {
+									if child, ok := childRaw.(map[string]interface{}); ok {
+										findImages(child)
+									}
+								}
+							}
+						}
+
+						findImages(foundNode)
+
+						// If the task name suggests it is an illustration, image, graphic, or logo, export the entire component as an image.
+						nameLower := strings.ToLower(targetTask.Name)
+						if strings.Contains(nameLower, "illustration") || strings.Contains(nameLower, "image") || strings.Contains(nameLower, "graphic") || strings.Contains(nameLower, "logo") {
+							found := false
+							for _, id := range imageNodes {
+								if id == targetTask.FigmaNodeID {
+									found = true
+									break
+								}
+							}
+							if !found && targetTask.FigmaNodeID != "" {
+								imageNodes = append(imageNodes, targetTask.FigmaNodeID)
+							}
+						}
+
+						// Now download images if we found any using the standard FetchImageURLs API
+						if len(imageNodes) > 0 && figmaClient != nil && st.FigmaFileKey != "" && st.FigmaFileKey != "local" {
+							logger.Step("Found %d image nodes locally, fetching from Figma...", len(imageNodes))
+							imgURLs, err := figmaClient.FetchImageURLs(st.FigmaFileKey, imageNodes)
+							if err == nil {
+								imgDir := outDir + "/public/images"
+								err = figmaClient.DownloadImages(imgURLs, imgDir)
+								if err == nil {
+									for id := range imgURLs {
+										safeID := strings.ReplaceAll(id, ":", "_")
+										availableImages = append(availableImages, safeID+".png")
+									}
+								}
+							} else {
+								logger.Warn("Failed to fetch image URLs: %v", err)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// 3. Generate Code
+		var codeResp *agents.CoderResponse
+		var targetFilePath string
+
+		if targetTask.Type == "component" {
+			if targetTask.IsShadcn {
+				// Skip AI generation for shadcn components, just install it
+				codeResp = &agents.CoderResponse{
+					ShadcnComponents: []string{strings.ToLower(targetTask.Name)},
+					Translations:     make(map[string]interface{}),
+				}
+				targetFilePath = "" // No specific file to format since it's shadcn
+			} else {
+				codeResp, err = agents.RunCoderForComponent(ctx, aiClient, cfg, *targetTask.ComponentPlan, availableImages, mcpContext)
+				if err == nil {
+					targetFilePath, err = filesystem.WriteComponent(outDir, targetTask.Name, targetTask.IsShadcn, codeResp.Code)
+				}
+			}
+		} else {
+			codeResp, err = agents.RunCoderForPage(ctx, aiClient, cfg, *targetTask.PagePlan, availableImages, mcpContext)
+			if err == nil {
+				targetFilePath, err = filesystem.WritePage(outDir, targetTask.Name, codeResp.Code)
+			}
+		}
+
+		// Post-Generation Processing (Executor)
+		if err == nil && codeResp != nil {
+			_ = executor.InstallDependencies(outDir, cfg.PackageManager, codeResp.Dependencies)
+			_ = executor.InstallShadcn(outDir, cfg.PackageManager, codeResp.ShadcnComponents)
+			if targetFilePath != "" {
+				_ = executor.LintFile(outDir, cfg.PackageManager, targetFilePath)
+			}
+
+			// Inject Translations into en.json
+			if len(codeResp.Translations) > 0 {
+				errTrans := filesystem.InjectTranslations(outDir, targetTask.Name, codeResp.Translations)
+				if errTrans != nil {
+					logger.Warn("Failed to inject translations for %s: %v", targetTask.Name, errTrans)
+				}
+			}
+		}
+
+		if err != nil {
+			logger.Error("Task %s failed: %v", targetTask.Name, err)
+			st.Tasks[taskIndex].Status = "failed"
 			state.SaveState(outDir, st)
 
-			// Execute
-			var codeResp *agents.CoderResponse
-			var targetFilePath string
-
-			if targetTask.Type == "component" {
-				if targetTask.IsShadcn {
-					// Skip AI generation for shadcn components, just install it
-					codeResp = &agents.CoderResponse{
-						ShadcnComponents: []string{strings.ToLower(targetTask.Name)},
-						Translations:     make(map[string]interface{}),
-					}
-					targetFilePath = "" // No specific file to format since it's shadcn
-				} else {
-					codeResp, err = agents.RunCoderForComponent(ctx, aiClient, cfg, *targetTask.ComponentPlan)
-					if err == nil {
-						targetFilePath, err = filesystem.WriteComponent(outDir, targetTask.Name, targetTask.IsShadcn, codeResp.Code)
-					}
-				}
-			} else {
-				codeResp, err = agents.RunCoderForPage(ctx, aiClient, cfg, *targetTask.PagePlan)
-				if err == nil {
-					targetFilePath, err = filesystem.WritePage(outDir, targetTask.Name, codeResp.Code)
-				}
-			}
-
-			// Post-Generation Processing (Executor)
-			if err == nil && codeResp != nil {
-				_ = executor.InstallDependencies(outDir, cfg.PackageManager, codeResp.Dependencies)
-				_ = executor.InstallShadcn(outDir, cfg.PackageManager, codeResp.ShadcnComponents)
-				if targetFilePath != "" {
-					_ = executor.LintFile(outDir, cfg.PackageManager, targetFilePath)
-				}
-				
-				// Inject Translations into en.json
-				if len(codeResp.Translations) > 0 {
-					errTrans := filesystem.InjectTranslations(outDir, targetTask.Name, codeResp.Translations)
-					if errTrans != nil {
-						logger.Warn("Failed to inject translations for %s: %v", targetTask.Name, errTrans)
-					}
-				}
-			}
-
-			if err != nil {
-				logger.Error("Task %s failed: %v", targetTask.Name, err)
-				st.Tasks[taskIndex].Status = "failed"
-				state.SaveState(outDir, st)
-				
-				if !runAll {
-					break
-				}
-
-				logger.Prompt("Task failed. Do you want to continue executing the remaining tasks? (y/N): ")
-				reader := bufio.NewReader(os.Stdin)
-				response, _ := reader.ReadString('\n')
-				response = strings.TrimSpace(strings.ToLower(response))
-				if response != "y" && response != "yes" {
-					logger.Warn("Stopping execution.")
-					break
-				}
-			} else {
-				logger.Success("Task %s completed!", targetTask.Name)
-				st.Tasks[taskIndex].Status = "completed"
-				state.SaveState(outDir, st)
-			}
-
-			if !runAll {
-				logger.Info("Run 'figgen run' again to execute the next task, or 'figgen run --all' to execute all.")
+			if !isAll {
 				break
 			}
 
-			// Respect Gemini free tier limits (15 Requests Per Minute)
-			if runProvider == "gemini" {
-				logger.Info("Waiting 4 seconds to respect Gemini API free-tier rate limits...")
-				time.Sleep(4 * time.Second)
+			logger.Prompt("Task failed. Do you want to continue executing the remaining tasks? (y/N): ")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.TrimSpace(strings.ToLower(response))
+			if response != "y" && response != "yes" {
+				logger.Warn("Stopping execution.")
+				break
 			}
+		} else {
+			logger.Success("Task %s completed!", targetTask.Name)
+			st.Tasks[taskIndex].Status = "completed"
+			state.SaveState(outDir, st)
 		}
-	},
+
+		if !isAll {
+			logger.Info("Run 'figgen run' again to execute the next task, or 'figgen run --all' to execute all.")
+			break
+		}
+
+		// Respect Gemini free tier limits (15 Requests Per Minute)
+		if provider == "gemini" {
+			logger.Info("Waiting 4 seconds to respect Gemini API free-tier rate limits...")
+			time.Sleep(4 * time.Second)
+		}
+	}
 }
 
 func init() {

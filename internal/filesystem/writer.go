@@ -55,6 +55,11 @@ func WritePage(outDir string, routeName string, code string) (string, error) {
 func InjectTranslations(outDir string, namespace string, newTranslations map[string]interface{}) error {
 	messagesPath := filepath.Join(outDir, "src", "messages", "en.json")
 	
+	// Create messages directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(messagesPath), 0755); err != nil {
+		return err
+	}
+
 	// Read existing JSON
 	data, err := os.ReadFile(messagesPath)
 	if err != nil {
@@ -107,34 +112,32 @@ func InjectTranslations(outDir string, namespace string, newTranslations map[str
 		}
 	}
 
-	// If the AI returned nested objects, we should merge them at the root
-	// If the AI returned a flat map, we should probably nest it under the component name (namespace)
-	hasNestedObjects := false
-	for _, v := range newTranslations {
-		if _, ok := v.(map[string]interface{}); ok {
-			hasNestedObjects = true
-			break
+	// Clean up newTranslations by unflattening any dot notations first
+	cleanTranslations := make(map[string]interface{})
+	unflattenAndMerge(cleanTranslations, newTranslations)
+
+	ns := strings.ToLower(namespace)
+
+	// If the AI already nested everything under the namespace, unwrap it to prevent double nesting.
+	if nsVal, ok := cleanTranslations[ns]; ok && len(cleanTranslations) == 1 {
+		if nsMap, isMap := nsVal.(map[string]interface{}); isMap {
+			cleanTranslations = nsMap
 		}
 	}
 
-	if hasNestedObjects {
-		// AI provided namespaces, unflatten and merge at root
-		unflattenAndMerge(messages, newTranslations)
-	} else {
-		// Flat map, nest it under the namespace
-		ns := strings.ToLower(namespace)
-		if messages[ns] == nil {
-			messages[ns] = make(map[string]interface{})
-		}
-		
-		nsMap, ok := messages[ns].(map[string]interface{})
-		if !ok {
-			nsMap = make(map[string]interface{})
-			messages[ns] = nsMap
-		}
-		
-		unflattenAndMerge(nsMap, newTranslations)
+	// Ensure the namespace object exists in the global messages
+	if messages[ns] == nil {
+		messages[ns] = make(map[string]interface{})
 	}
+	
+	targetMap, ok := messages[ns].(map[string]interface{})
+	if !ok {
+		targetMap = make(map[string]interface{})
+		messages[ns] = targetMap
+	}
+
+	// Deep merge the cleaned translations into the target namespace
+	unflattenAndMerge(targetMap, cleanTranslations)
 
 	// Write back
 	outBytes, err := json.MarshalIndent(messages, "", "  ")

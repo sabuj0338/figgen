@@ -1,0 +1,78 @@
+metadata:
+  name: Travel Pass
+  components: {}
+  componentSets: {}
+nodes:
+  - id: 1:2
+    name: 🌐 Design - Web
+    type: CANVAS
+    children:
+      - id: 404:6175
+        name: _x23_eede9bff
+        type: GROUP
+        layout: layout_OKXR5N
+        borderRadius: 0px 0px 0px 0px
+      - id: 404:6177
+        name: _x23_efe1a6ff
+        type: GROUP
+        layout: layout_0DOXFA
+        borderRadius: 0px 0px 0px 0px
+      - id: 1756:4663
+        name: Travel Pass User
+        type: SECTION
+        layout: layout_DS02OY
+        fills: fill_DNE3AW
+        strokes: fill_B3FAHL
+        strokeWeight: 1px
+      - id: 1827:5430
+        name: Admin
+        type: SECTION
+        layout: layout_3S1N7S
+        fills: fill_BQCJLE
+        strokes: fill_B3FAHL
+        strokeWeight: 1px
+      - id: 1827:8027
+        name: Super Admin
+        type: SECTION
+        layout: layout_D4B52Y
+        fills: fill_DNE3AW
+        strokes: fill_B3FAHL
+        strokeWeight: 1px
+globalVars:
+  styles:
+    layout_OKXR5N:
+      mode: none
+      sizing: {}
+      dimensions:
+        width: 0.22
+        height: 0.66
+    layout_0DOXFA:
+      mode: none
+      sizing: {}
+      dimensions:
+        width: 0.2
+        height: 0.68
+    layout_DS02OY:
+      mode: none
+      sizing: {}
+      dimensions:
+        width: 11878
+        height: 15763
+    fill_DNE3AW:
+      - '#444444'
+    fill_B3FAHL:
+      - rgba(255, 255, 255, 0.1)
+    layout_3S1N7S:
+      mode: none
+      sizing: {}
+      dimensions:
+        width: 18204
+        height: 9794
+    fill_BQCJLE:
+      - '#1E1E1E'
+    layout_D4B52Y:
+      mode: none
+      sizing: {}
+      dimensions:
+        width: 9832
+        height: 7489

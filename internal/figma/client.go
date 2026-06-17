@@ -55,7 +55,7 @@ func ParseURL(figmaURL string) (fileKey string, nodeID string, err error) {
 func (c *Client) FetchFile(fileKey string, nodeID string) (*FileResponse, error) {
 	url := fmt.Sprintf("https://api.figma.com/v1/files/%s", fileKey)
 	if nodeID != "" {
-		url = fmt.Sprintf("%s?ids=%s", url, nodeID)
+		url = fmt.Sprintf("%s/nodes?ids=%s", url, nodeID)
 	}
 
 	req, err := http.NewRequest("GET", url, nil)

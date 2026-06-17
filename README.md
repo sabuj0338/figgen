@@ -57,22 +57,20 @@ go build -o figgen
 
 Ensure your `figgen.config.yaml` is present in the root directory. This tells the AI what framework you are using and what boilerplate repository to clone.
 
-### Step 3: Plan the Architecture
+### Step 3: Plan the Architecture (Using the Local Plugin)
 
-Run the `plan` command. This will:
+We use a local WebSocket bridge to bypass Figma's cloud API rate limits entirely.
 
-1. Clone the boilerplate to `./out`.
-2. Extract the design from your Figma URL.
-3. Run the AI Planner to map the architecture.
-4. Save the execution state to `./out/.figgen/tasks.json` and a human-readable `./out/.figgen/tasks.md`.
+1. **Install the Plugin (One-time):** Open Figma > Plugins > Development > Import plugin from manifest. Select the `manifest.json` inside the `./figma-plugin` folder of this repository.
+2. **Start the Listener:** In your terminal, run the `listen` command. This will clone your boilerplate to `./out` and wait for data.
 
 ```bash
-# Step 1: Clone repo, extract figma, and generate tasks.md
-./figgen plan
-
-# Use a different LLM provider:
-./figgen plan --figma "<url>" --provider anthropic --model claude-3-5-sonnet-20240620
+# Start the local WebSocket server
+./figgen listen
 ```
+
+3. **Export from Figma:** Select a component or page in your Figma canvas, open the "Figgen Exporter" plugin, and click **Export**.
+4. The Go server will instantly receive the data, run the AI Planner, and save the execution state to `./out/.figgen/tasks.json` and `./out/.figgen/tasks.md`.
 
 ### Step 4: Execute the Tasks
 

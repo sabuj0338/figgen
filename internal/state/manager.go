@@ -11,12 +11,13 @@ import (
 )
 
 type Task struct {
-	ID        string `json:"id"`
-	Type      string `json:"type"`   // "component" or "page"
-	Name      string `json:"name"`
-	Category  string `json:"category"`
-	Status    string `json:"status"` // "pending", "in_progress", "completed", "failed"
-	IsShadcn  bool   `json:"is_shadcn,omitempty"`
+	ID          string `json:"id"`
+	Type        string `json:"type"`   // "component" or "page"
+	Name        string `json:"name"`
+	Category    string `json:"category"`
+	Status      string `json:"status"` // "pending", "in_progress", "completed", "failed"
+	IsShadcn    bool   `json:"is_shadcn,omitempty"`
+	FigmaNodeID string `json:"figma_node_id,omitempty"`
 	
 	// Payload keeps the original plan
 	ComponentPlan *agents.ComponentPlan `json:"component_plan,omitempty"`
@@ -24,17 +25,19 @@ type Task struct {
 }
 
 type State struct {
-	Tasks []Task `json:"tasks"`
+	FigmaFileKey string `json:"figma_file_key,omitempty"`
+	Tasks        []Task `json:"tasks"`
 }
 
 // InitState takes the PlannerResponse and creates the initial state files
-func InitState(outDir string, plan *agents.PlannerResponse) error {
+func InitState(outDir string, fileKey string, plan *agents.PlannerResponse) error {
 	stateDir := filepath.Join(outDir, ".figgen")
 	if err := os.MkdirAll(stateDir, 0755); err != nil {
 		return fmt.Errorf("failed to create state directory: %w", err)
 	}
 
 	var state State
+	state.FigmaFileKey = fileKey
 	for i, comp := range plan.Components {
 		c := comp // copy
 		state.Tasks = append(state.Tasks, Task{
@@ -44,6 +47,7 @@ func InitState(outDir string, plan *agents.PlannerResponse) error {
 			Category:      comp.Category,
 			Status:        "pending",
 			IsShadcn:      comp.IsShadcn,
+			FigmaNodeID:   comp.FigmaNodeID,
 			ComponentPlan: &c,
 		})
 	}
@@ -51,12 +55,13 @@ func InitState(outDir string, plan *agents.PlannerResponse) error {
 	for i, page := range plan.Pages {
 		p := page // copy
 		state.Tasks = append(state.Tasks, Task{
-			ID:       fmt.Sprintf("page_%d", i),
-			Type:     "page",
-			Name:     page.Name,
-			Category: page.Category,
-			Status:   "pending",
-			PagePlan: &p,
+			ID:          fmt.Sprintf("page_%d", i),
+			Type:        "page",
+			Name:        page.Name,
+			Category:    page.Category,
+			Status:      "pending",
+			FigmaNodeID: page.FigmaNodeID,
+			PagePlan:    &p,
 		})
 	}
 

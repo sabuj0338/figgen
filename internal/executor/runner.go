@@ -10,11 +10,24 @@ import (
 
 // InstallDependencies runs the package manager install command
 func InstallDependencies(outDir string, pkgManager string, deps []string) error {
-	if len(deps) == 0 {
+	var validDeps []string
+	for _, d := range deps {
+		// Ignore built-in next/ and react/ imports, and next/react themselves to avoid overriding package.json
+		if strings.HasPrefix(d, "next/") || strings.HasPrefix(d, "react/") || d == "react" || d == "react-dom" || d == "next" {
+			continue
+		}
+		// Ignore paths that are not scoped packages
+		if strings.Contains(d, "/") && !strings.HasPrefix(d, "@") {
+			continue
+		}
+		validDeps = append(validDeps, d)
+	}
+
+	if len(validDeps) == 0 {
 		return nil
 	}
 
-	logger.Step("Installing dependencies: %s", strings.Join(deps, ", "))
+	logger.Step("Installing dependencies: %s", strings.Join(validDeps, ", "))
 
 	cmdArgs := []string{"install"}
 	if pkgManager == "npm" {
@@ -27,7 +40,7 @@ func InstallDependencies(outDir string, pkgManager string, deps []string) error 
 		cmdArgs = []string{"add"}
 	}
 
-	cmdArgs = append(cmdArgs, deps...)
+	cmdArgs = append(cmdArgs, validDeps...)
 
 	cmd := exec.Command(pkgManager, cmdArgs...)
 	cmd.Dir = outDir

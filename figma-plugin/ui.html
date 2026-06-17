@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { 
+    font-family: Inter, -apple-system, sans-serif; 
+    padding: 16px; 
+    text-align: center; 
+    background-color: var(--figma-color-bg);
+    color: var(--figma-color-text);
+    margin: 0;
+  }
+  button {
+    background-color: #0D99FF;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+    width: 100%;
+    margin-bottom: 12px;
+  }
+  button:hover { background-color: #007BE5; }
+  #status { font-size: 11px; color: #777; line-height: 1.4; word-break: break-all; }
+</style>
+</head>
+<body>
+  <button id="exportBtn">Export Selection to Figgen</button>
+  <div id="status">Ready. Select a layer and click export.</div>
+
+<script>
+  let socket = null;
+
+  function connectWebSocket(payload) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify(payload));
+      document.getElementById('status').innerText = `Exported node: ${payload.id}`;
+      return;
+    }
+
+    document.getElementById('status').innerText = "Connecting to localhost:8080...";
+    socket = new WebSocket("ws://localhost:8080/ws");
+
+    socket.onopen = () => {
+      socket.send(JSON.stringify(payload));
+      document.getElementById('status').innerText = `Exported node: ${payload.id}`;
+    };
+
+    socket.onerror = (err) => {
+      document.getElementById('status').innerText = "Connection failed. Is 'figgen listen' running?";
+    };
+  }
+
+  document.getElementById('exportBtn').onclick = () => {
+    parent.postMessage({ pluginMessage: { type: 'get-selection' } }, '*');
+  };
+
+  window.onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (msg && msg.type === 'selection-data') {
+      connectWebSocket(msg.data);
+    } else if (msg && msg.type === 'error') {
+      document.getElementById('status').innerText = msg.message;
+    }
+  };
+</script>
+</body>
+</html>
