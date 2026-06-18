@@ -10,13 +10,15 @@ import (
 
 	"github.com/sabujislam/figgen/internal/agents"
 	"github.com/sabujislam/figgen/internal/config"
-	"github.com/sabujislam/figgen/internal/filesystem"
 	"github.com/sabujislam/figgen/internal/executor"
 	"github.com/sabujislam/figgen/internal/figma"
+	"github.com/sabujislam/figgen/internal/filesystem"
 	"github.com/sabujislam/figgen/internal/github"
 	"github.com/sabujislam/figgen/internal/logger"
+	"github.com/sabujislam/figgen/internal/mcp"
 	"github.com/sabujislam/figgen/internal/state"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -66,6 +68,16 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 
 	figmaClient, _ := figma.NewClient()
 
+	var mcpClient *mcp.Client
+	if figmaClient != nil && figmaClient.Token != "" {
+		c, err := mcp.NewClient("npx", []string{"-y", "figma-developer-mcp", "--stdio", "--figma-api-key", figmaClient.Token}, nil)
+		if err == nil {
+			mcpClient = c
+			mcpClient.Initialize(ctx)
+			defer mcpClient.Close()
+		}
+	}
+
 	for {
 		st, err := state.LoadState(outDir)
 		if err != nil {
@@ -97,22 +109,67 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 		var availableImages []string
 		var mcpContext string
 
-		// 1. Build MCP Context for this node locally from figma_context.json
+		// 1. Build MCP Context for this node
 		if targetTask.FigmaNodeID != "" {
 			contextFile := outDir + "/.figgen/figma_context.json"
 			contextData, err := os.ReadFile(contextFile)
+			
+			var rootNode map[string]interface{}
+
 			if err == nil {
 				var root map[string]interface{}
 				if json.Unmarshal(contextData, &root) == nil {
 					foundNode := figma.FindNodeByID(root, targetTask.FigmaNodeID)
 					if foundNode != nil {
-						nodeBytes, _ := json.Marshal(foundNode)
-						prunedCtx, err := figma.PruneForCoder(string(nodeBytes))
-						if err == nil {
-							mcpContext = prunedCtx
-						} else {
-							mcpContext = string(nodeBytes)
+						rootNode = foundNode
+					}
+				}
+			}
+
+			if rootNode == nil && mcpClient != nil && st.FigmaFileKey != "" && st.FigmaFileKey != "local" {
+				logger.Step("Fetching live context for node %s via MCP...", targetTask.FigmaNodeID)
+				chunkArgs := map[string]interface{}{
+					"fileKey": st.FigmaFileKey,
+					"depth":   4, // Fetch deep context
+					"nodeId":  targetTask.FigmaNodeID,
+				}
+				chunkBytes, mcpErr := mcpClient.Call(ctx, "tools/call", map[string]interface{}{
+					"name":      "get_figma_data",
+					"arguments": chunkArgs,
+				})
+				if mcpErr == nil {
+					var chunkResult struct {
+						Content []struct {
+							Type string `json:"type"`
+							Text string `json:"text"`
+						} `json:"content"`
+					}
+					json.Unmarshal(chunkBytes, &chunkResult)
+					if len(chunkResult.Content) > 0 {
+						chunkRaw := chunkResult.Content[0].Text
+						
+						var root interface{}
+						if yaml.Unmarshal([]byte(chunkRaw), &root) == nil {
+							if foundNode := figma.FindNodeByID(root, targetTask.FigmaNodeID); foundNode != nil {
+								rootNode = foundNode
+							} else if m, ok := root.(map[string]interface{}); ok {
+								rootNode = m
+							}
 						}
+					}
+				} else {
+					logger.Warn("Live MCP fetch failed: %v", mcpErr)
+				}
+			}
+
+			if rootNode != nil {
+				nodeBytes, _ := json.Marshal(rootNode)
+				prunedCtx, err := figma.PruneForCoder(string(nodeBytes))
+				if err == nil {
+					mcpContext = prunedCtx
+				} else {
+					mcpContext = string(nodeBytes)
+				}
 
 						// 2. Extremely simple local recursive image finder on map[string]interface{}
 						var imageNodes []string
@@ -172,7 +229,7 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 							}
 						}
 
-						findImages(foundNode)
+						findImages(rootNode)
 
 						// If the task name suggests it is an icon or logo, export it as an SVG.
 						taskNameLower := strings.ToLower(targetTask.Name)
@@ -221,8 +278,6 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 								logger.Warn("Failed to fetch SVG URLs: %v", err)
 							}
 						}
-					}
-				}
 			}
 		}
 

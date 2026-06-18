@@ -123,15 +123,20 @@ var planCmd = &cobra.Command{
 			rawYAML = mcpResult.Content[0].Text
 		}
 
-		childIDs, err := figma.ExtractChildIDs(rawYAML)
-		if err != nil {
-			logger.Info("Failed to extract children IDs from YAML: %v", err)
-		}
-
-		// If no children were found, fall back to just processing the selected node ID itself
-		targetIDs := childIDs
-		if len(targetIDs) == 0 {
+		var targetIDs []string
+		if nodeID != "" {
+			// If a specific node ID is provided in the URL, target only that node
 			targetIDs = []string{nodeID}
+		} else {
+			// Otherwise, extract top-level frames/pages to plan them individually
+			childIDs, err := figma.ExtractChildIDs(rawYAML)
+			if err != nil {
+				logger.Info("Failed to extract children IDs from YAML: %v", err)
+			}
+			targetIDs = childIDs
+			if len(targetIDs) == 0 {
+				targetIDs = []string{nodeID}
+			}
 		}
 
 		logger.Step("Identified %d structural segments to plan. Running Architecture Planner...", len(targetIDs))

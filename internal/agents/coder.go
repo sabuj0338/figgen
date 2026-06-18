@@ -30,6 +30,7 @@ func RunCoderForComponent(ctx context.Context, ai LLMProvider, cfg *config.Confi
 Write the exact TypeScript React code for the following component plan.
 Do NOT output markdown formatting like "` + "```tsx" + `". ONLY output pure JSON.
 CRITICAL JSON FORMATTING: You MUST output strictly valid JSON. Because the "code" field contains a large string of React code, you MUST properly escape ALL double quotes (\") and newlines (\n) inside the code string. Failure to escape double quotes will break the JSON parser.
+CRITICAL LINTING & CLEAN CODE: Do NOT leave any unused imports, variables, or functions. If you do not use a variable or import, you MUST delete it. You MUST NOT use 'any' types anywhere; define proper TypeScript interfaces. If you use standard HTML <img> tags instead of next/image, you MUST place {/* eslint-disable-next-line @next/next/no-img-element */} on the line immediately preceding each <img> tag.
 Identify any external NPM dependencies you use (like "date-fns" or "lucide-react") and any shadcn/ui components you import (like "button" or "calendar").
 %s
 CRITICAL: For navigation, strictly use "import Link from 'next/link'" and "import { useRouter } from 'next/navigation'". Do NOT use @/i18n/navigation.
@@ -86,6 +87,7 @@ func RunCoderForPage(ctx context.Context, ai LLMProvider, cfg *config.Config, pa
 Write the exact TypeScript React code for the following Next.js App Router Page.
 Do NOT output markdown formatting like "` + "```tsx" + `". ONLY output pure JSON.
 CRITICAL JSON FORMATTING: You MUST output strictly valid JSON. Because the "code" field contains a large string of React code, you MUST properly escape ALL double quotes (\") and newlines (\n) inside the code string. Failure to escape double quotes will break the JSON parser.
+CRITICAL LINTING & CLEAN CODE: Do NOT leave any unused imports, variables, or functions. If you do not use a variable or import, you MUST delete it. You MUST NOT use 'any' types anywhere; define proper TypeScript interfaces. If you use standard HTML <img> tags instead of next/image, you MUST place {/* eslint-disable-next-line @next/next/no-img-element */} on the line immediately preceding each <img> tag.
 Identify any external NPM dependencies you use (like "date-fns" or "lucide-react") and any shadcn/ui components you import (like "button" or "calendar").
 CRITICAL: For navigation, strictly use "import Link from 'next/link'" and "import { useRouter } from 'next/navigation'". Do NOT use @/i18n/navigation.
 CRITICAL NEXT-INTL NAMESPACE: Your translations will be injected into en.json under the explicit namespace "%s". You MUST initialize next-intl using exactly: const t = useTranslations("%s"); and access keys directly from it. Do NOT use any other namespace and do NOT nest your "translations" output block under another namespace key. You MUST extract all visible text from the Figma semantic context and place it in the translations map. Do not use dummy data.
