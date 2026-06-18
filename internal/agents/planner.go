@@ -39,6 +39,11 @@ Analyze the following Figma Design semantic context and the provided project con
 Create a structured component generation plan. Group components and pages into logical modules using the "category" field (e.g. "Authentication", "Dashboard", "Settings"). For shared/generic UI elements, use the category "Global".
 CRITICAL: You MUST break down large layouts into granular, reusable components (e.g. HeroSection, FeatureList, Footer). Do NOT output a single massive component for the entire page.
 
+CRITICAL MIXED APPROACH FOR SHADCN:
+Evaluate the Figma semantic context to determine the component architecture:
+1. If the node explicitly matches a standard Shadcn UI atomic component (e.g., Button, Input, Select, Dialog), set "is_shadcn": true.
+2. If the node is a custom layout, group of vectors, or complex section (e.g., HeroSection, FeatureCard, NavigationBar) that does NOT directly map to a standard atomic component, set "is_shadcn": false. The agent will design these independently using raw Tailwind.
+
 Configuration Rules:
 %s
 

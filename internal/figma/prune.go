@@ -2,6 +2,8 @@ package figma
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -29,7 +31,6 @@ func PruneFigmaData(raw string) (string, error) {
 func walkAndPrune(node interface{}) interface{} {
 	switch v := node.(type) {
 	case map[string]interface{}:
-		// Remove keys that consume large amounts of tokens without adding architectural value
 		keysToRemove := []string{
 			"style", "fills", "strokes", "effects",
 			"absoluteBoundingBox", "absoluteRenderBounds",
@@ -37,29 +38,37 @@ func walkAndPrune(node interface{}) interface{} {
 			"blendMode", "exportSettings", "constraints",
 			"transitionNodeID", "transitionDuration", "transitionEasing",
 			"preserveRatio", "layoutAlign", "layoutGrow",
-			"css", // sometimes injected by MCP plugins
+			"css",
 		}
 
 		for _, k := range keysToRemove {
 			delete(v, k)
 		}
 
-		// Keep essential keys like 'id', 'name', 'type', 'children', 'characters' (for text)
-		
-		// Recursively prune children if they exist
 		for key, val := range v {
-			v[key] = walkAndPrune(val)
+			if arr, ok := val.([]interface{}); ok && len(arr) == 0 {
+				delete(v, key)
+			} else if str, ok := val.(string); ok && (str == "" || (key == "layoutMode" && str == "NONE")) {
+				delete(v, key)
+			} else if val == nil {
+				delete(v, key)
+			} else {
+				v[key] = walkAndPrune(val)
+			}
 		}
 		return v
 
 	case []interface{}:
-		for i, item := range v {
-			v[i] = walkAndPrune(item)
+		var newList []interface{}
+		for _, item := range v {
+			pruned := walkAndPrune(item)
+			if pruned != nil {
+				newList = append(newList, pruned)
+			}
 		}
-		return v
+		return newList
 
 	case string:
-		// Clean up massive strings just in case
 		if len(v) > 500 {
 			return v[:500] + "...(truncated)"
 		}
@@ -82,7 +91,6 @@ func PruneForCoder(raw string) (string, error) {
 
 	data = walkAndPruneForCoder(data)
 
-	// Marshal without indent to minify payload
 	minified, err := json.Marshal(data)
 	if err != nil {
 		return "", err
@@ -94,7 +102,14 @@ func PruneForCoder(raw string) (string, error) {
 func walkAndPruneForCoder(node interface{}) interface{} {
 	switch v := node.(type) {
 	case map[string]interface{}:
-		// Only remove math/vector data that wastes tokens. KEEP styles/fills.
+		// Check if it's a color map
+		r, rok := getFloat(v, "r")
+		g, gok := getFloat(v, "g")
+		b, bok := getFloat(v, "b")
+		if rok && gok && bok {
+			return rgbaToHex(r, g, b)
+		}
+
 		keysToRemove := []string{
 			"absoluteBoundingBox", "absoluteRenderBounds",
 			"geometry", "fillGeometry", "strokeGeometry",
@@ -105,16 +120,36 @@ func walkAndPruneForCoder(node interface{}) interface{} {
 			delete(v, k)
 		}
 
+		if styleMap, ok := v["style"].(map[string]interface{}); ok {
+			tailwind := mapStyleToTailwind(styleMap)
+			if tailwind != "" {
+				v["tailwind_text"] = tailwind
+			}
+			delete(v, "style")
+		}
+
 		for key, val := range v {
-			v[key] = walkAndPruneForCoder(val)
+			if arr, ok := val.([]interface{}); ok && len(arr) == 0 {
+				delete(v, key)
+			} else if str, ok := val.(string); ok && (str == "" || (key == "layoutMode" && str == "NONE")) {
+				delete(v, key)
+			} else if val == nil {
+				delete(v, key)
+			} else {
+				v[key] = walkAndPruneForCoder(val)
+			}
 		}
 		return v
 
 	case []interface{}:
-		for i, item := range v {
-			v[i] = walkAndPruneForCoder(item)
+		var newList []interface{}
+		for _, item := range v {
+			pruned := walkAndPruneForCoder(item)
+			if pruned != nil {
+				newList = append(newList, pruned)
+			}
 		}
-		return v
+		return newList
 
 	case string:
 		if len(v) > 500 {
@@ -127,3 +162,57 @@ func walkAndPruneForCoder(node interface{}) interface{} {
 	}
 }
 
+func getFloat(m map[string]interface{}, key string) (float64, bool) {
+	if val, ok := m[key]; ok {
+		if f, ok := val.(float64); ok {
+			return f, true
+		}
+		if i, ok := val.(int); ok {
+			return float64(i), true
+		}
+	}
+	return 0, false
+}
+
+func rgbaToHex(r, g, b float64) string {
+	ir := int(math.Round(r * 255))
+	ig := int(math.Round(g * 255))
+	ib := int(math.Round(b * 255))
+	return fmt.Sprintf("#%02X%02X%02X", ir, ig, ib)
+}
+
+func mapStyleToTailwind(style map[string]interface{}) string {
+	var classes []string
+
+	fs, _ := getFloat(style, "fontSize")
+	if fs > 0 {
+		classes = append(classes, fmt.Sprintf("text-[%dpx]", int(fs)))
+	}
+
+	fw, _ := getFloat(style, "fontWeight")
+	if fw > 0 {
+		if fw == 400 {
+			classes = append(classes, "font-normal")
+		} else if fw == 500 {
+			classes = append(classes, "font-medium")
+		} else if fw == 600 {
+			classes = append(classes, "font-semibold")
+		} else if fw == 700 {
+			classes = append(classes, "font-bold")
+		} else {
+			classes = append(classes, fmt.Sprintf("font-[%d]", int(fw)))
+		}
+	}
+
+	lh, _ := getFloat(style, "lineHeightPx")
+	if lh > 0 {
+		classes = append(classes, fmt.Sprintf("leading-[%dpx]", int(lh)))
+	}
+
+	ls, _ := getFloat(style, "letterSpacing")
+	if ls != 0 {
+		classes = append(classes, fmt.Sprintf("tracking-[%.2fpx]", ls))
+	}
+
+	return strings.Join(classes, " ")
+}

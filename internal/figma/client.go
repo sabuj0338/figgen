@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,22 +121,57 @@ func (c *Client) FetchImageURLs(fileKey string, nodeIDs []string, format string)
 	}
 
 	url := fmt.Sprintf("https://api.figma.com/v1/images/%s?ids=%s&format=%s", fileKey, strings.Join(nodeIDs, ","), format)
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	var resp *http.Response
+	var err error
+	maxRetries := 5
+	backoff := 5 * time.Second
 
-	req.Header.Add("X-Figma-Token", c.Token)
+	for i := 0; i < maxRetries; i++ {
+		req, reqErr := http.NewRequest("GET", url, nil)
+		if reqErr != nil {
+			return nil, fmt.Errorf("failed to create request: %w", reqErr)
+		}
+		req.Header.Add("X-Figma-Token", c.Token)
 
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch from figma api: %w", err)
+		resp, err = c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch from figma api: %w", err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			break
+		} else if resp.StatusCode == http.StatusTooManyRequests {
+			resp.Body.Close()
+			if i == maxRetries-1 {
+				fmt.Println("Warning: Figma API max retries reached. Skipping images.")
+				return make(map[string]string), nil
+			}
+			
+			// Check for Retry-After header
+			retryAfterStr := resp.Header.Get("Retry-After")
+			waitTime := backoff
+			if retryAfterStr != "" {
+				if seconds, err := strconv.Atoi(retryAfterStr); err == nil {
+					waitTime = time.Duration(seconds) * time.Second
+				}
+			}
+			
+			// If Figma asks us to wait an absurd amount of time (e.g. quota exceeded)
+			if waitTime > 60*time.Second {
+				fmt.Printf("Warning: Figma API rate limit requires waiting %v. Skipping image downloads to continue generation.\n", waitTime)
+				return make(map[string]string), nil
+			}
+			
+			fmt.Printf("Rate limited by Figma API (429). Retrying in %v...\n", waitTime)
+			time.Sleep(waitTime)
+			backoff *= 2 // Exponential backoff
+			continue
+		} else {
+			defer resp.Body.Close()
+			return nil, fmt.Errorf("figma api returned status %d", resp.StatusCode)
+		}
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("figma api returned status %d", resp.StatusCode)
-	}
 
 	var imageResp ImageResponse
 	if err := json.NewDecoder(resp.Body).Decode(&imageResp); err != nil {

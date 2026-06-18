@@ -120,6 +120,24 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 						var findImages func(node map[string]interface{})
 						findImages = func(node map[string]interface{}) {
 							isImage := false
+							isVector := false
+
+							nodeType, _ := node["type"].(string)
+							nodeName, _ := node["name"].(string)
+
+							// Check if the node is a vector type
+							if nodeType == "VECTOR" || nodeType == "STAR" || nodeType == "POLYGON" || nodeType == "ELLIPSE" || nodeType == "REGULAR_POLYGON" || nodeType == "BOOLEAN_OPERATION" || nodeType == "LINE" {
+								isVector = true
+							}
+
+							// Check if the node name strongly implies an icon or logo
+							nameLower := strings.ToLower(nodeName)
+							if strings.Contains(nameLower, "icon") || strings.Contains(nameLower, "logo") || strings.Contains(nameLower, "svg") {
+								isVector = true
+							} else if strings.Contains(nameLower, "illustration") || strings.Contains(nameLower, "image") || strings.Contains(nameLower, "graphic") {
+								isImage = true
+							}
+
 							if fills, ok := node["fills"].([]interface{}); ok {
 								for _, fillRaw := range fills {
 									if fill, ok := fillRaw.(map[string]interface{}); ok {
@@ -133,12 +151,19 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 
 							nodeID, _ := node["id"].(string)
 
-							// Prevent the main target node itself from being downloaded as an image
-							if isImage && nodeID != "" && nodeID != targetTask.FigmaNodeID {
-								imageNodes = append(imageNodes, nodeID)
+							if nodeID != "" {
+								if isImage && nodeID != targetTask.FigmaNodeID {
+									imageNodes = append(imageNodes, nodeID)
+								} else if isVector && nodeID != targetTask.FigmaNodeID {
+									svgNodes = append(svgNodes, nodeID)
+								}
 							}
 
 							if children, ok := node["children"].([]interface{}); ok {
+								// If it's a known vector container, don't export individual paths
+								if isVector {
+									return
+								}
 								for _, childRaw := range children {
 									if child, ok := childRaw.(map[string]interface{}); ok {
 										findImages(child)
@@ -150,13 +175,12 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 						findImages(foundNode)
 
 						// If the task name suggests it is an icon or logo, export it as an SVG.
-						nameLower := strings.ToLower(targetTask.Name)
-						if strings.Contains(nameLower, "icon") || strings.Contains(nameLower, "logo") {
+						taskNameLower := strings.ToLower(targetTask.Name)
+						if strings.Contains(taskNameLower, "icon") || strings.Contains(taskNameLower, "logo") {
 							if targetTask.FigmaNodeID != "" {
 								svgNodes = append(svgNodes, targetTask.FigmaNodeID)
 							}
-						} else if strings.Contains(nameLower, "illustration") || strings.Contains(nameLower, "image") || strings.Contains(nameLower, "graphic") {
-							// If it's an illustration, image, or graphic, prefer PNG
+						} else if strings.Contains(taskNameLower, "illustration") || strings.Contains(taskNameLower, "image") || strings.Contains(taskNameLower, "graphic") {
 							if targetTask.FigmaNodeID != "" {
 								imageNodes = append(imageNodes, targetTask.FigmaNodeID)
 							}
@@ -221,7 +245,16 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 				}
 			}
 		} else {
-			codeResp, err = agents.RunCoderForPage(ctx, aiClient, cfg, *targetTask.PagePlan, availableImages, mcpContext)
+			reqComps := make(map[string]agents.ComponentPlan)
+			for _, reqName := range targetTask.PagePlan.Components {
+				for _, t := range st.Tasks {
+					if t.Type == "component" && t.Name == reqName && t.ComponentPlan != nil {
+						reqComps[reqName] = *t.ComponentPlan
+					}
+				}
+			}
+			
+			codeResp, err = agents.RunCoderForPage(ctx, aiClient, cfg, *targetTask.PagePlan, reqComps, availableImages, mcpContext)
 			if err == nil {
 				targetFilePath, err = filesystem.WritePage(outDir, targetTask.Name, codeResp.Code)
 			}

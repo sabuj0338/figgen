@@ -1,0 +1,28 @@
+```json
+{
+  "code": "import React from 'react';\nimport { useTranslations } from 'next-intl';\nimport Link from 'next/link';\n// useRouter is imported as per CRITICAL instruction, though not directly used in this page's root logic.\nimport { useRouter } from 'next/navigation';\n\nimport { Navbar } from '@/components/common/Navbar';\nimport { HeroContent } from '@/components/common/HeroContent';\nimport { HeroIllustration } from '@/components/common/HeroIllustration';\n\nexport default function HomePage() {\n  const t = useTranslations('home');\n\n  // Dummy search click handler for Navbar\n  const handleSearchClick = () => {\n    console.log('Search icon clicked');\n    // In a real app, this might open a search modal or navigate to a search page\n  };\n\n  // Navigation links for the Navbar component\n  const navLinks = [\n    { label: t('navbar.homeLink'), href: '/' },\n    { label: t('navbar.ourServicesLink'), href: '/services' }, // Assuming /services route\n    { label: t('navbar.aboutUsLink'), href: '/about' },     // Assuming /about route\n    { label: t('navbar.whatsNewLink'), href: '/news' },     // Assuming /news route\n  ];\n\n  return (\n    <div className=\"flex min-h-screen flex-col bg-[#FFFFFF]\">\n      <Navbar\n        logoText={t('navbar.logoText')}\n        navLinks={navLinks}\n        onSearchClick={handleSearchClick}\n        contactHref=\"/contact\" // Assuming /contact route\n      />\n\n      <main className=\"flex-1 flex flex-col items-center justify-center p-4 lg:p-6\">\n        <div className=\"w-full max-w-7xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-10 py-16\">\n          <div className=\"flex-1\">\n            <HeroContent\n              heading={t('heroSection.heading')}\n              body={t('heroSection.body')}\n              ctaText={t('heroSection.ctaButton')}\n              ctaHref=\"/get-started\" // Assuming /get-started route\n            />\n          </div>\n          <div className=\"flex-1 flex justify-center lg:justify-end\">\n            <HeroIllustration />\n          </div>\n        </div>\n      </main>\n    </div>\n  );\n}\n",
+  "dependencies": [
+    "next-intl",
+    "lucide-react"
+  ],
+  "shadcn_components": [
+    "button"
+  ],
+  "translations": {
+    "navbar": {
+      "logoText": "Quriarbox",
+      "homeLink": "Home",
+      "ourServicesLink": "Our services",
+      "aboutUsLink": "About Us",
+      "whatsNewLink": "What’s new?",
+      "contactUsButton": "Contact us",
+      "searchIconAlt": "Search"
+    },
+    "heroSection": {
+      "heading": "A trusted provider of courier services.",
+      "body": "We deliver your products safely to your home in a reasonable time.",
+      "ctaButton": "Get started "
+    }
+  }
+}
+```
