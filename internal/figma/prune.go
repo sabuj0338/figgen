@@ -13,8 +13,10 @@ import (
 // from the raw Figma YAML/JSON returned by the MCP server, to save LLM tokens.
 func PruneFigmaData(raw string) (string, error) {
 	var data interface{}
-	if err := yaml.Unmarshal([]byte(raw), &data); err != nil {
-		return "", err
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		if err := yaml.Unmarshal([]byte(raw), &data); err != nil {
+			return "", err
+		}
 	}
 
 	data = walkAndPrune(data)

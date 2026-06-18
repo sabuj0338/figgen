@@ -117,7 +117,7 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 			var rootNode map[string]interface{}
 
 			if err == nil {
-				var root map[string]interface{}
+				var root interface{}
 				if json.Unmarshal(contextData, &root) == nil {
 					foundNode := figma.FindNodeByID(root, targetTask.FigmaNodeID)
 					if foundNode != nil {

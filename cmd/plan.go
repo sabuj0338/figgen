@@ -13,6 +13,7 @@ import (
 	"github.com/sabujislam/figgen/internal/mcp"
 	"github.com/sabujislam/figgen/internal/state"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 )
 
 var (
@@ -142,6 +143,7 @@ var planCmd = &cobra.Command{
 		logger.Step("Identified %d structural segments to plan. Running Architecture Planner...", len(targetIDs))
 
 		masterPlan := &agents.PlannerResponse{}
+		var figmaContext []interface{}
 
 		for i, id := range targetIDs {
 			logger.Info("Planning chunk %d/%d (Node %s)...", i+1, len(targetIDs), id)
@@ -169,8 +171,18 @@ var planCmd = &cobra.Command{
 
 			if len(chunkResult.Content) > 0 {
 				chunkRaw := chunkResult.Content[0].Text
+				var nodeData interface{}
+				if err := json.Unmarshal([]byte(chunkRaw), &nodeData); err == nil {
+					figmaContext = append(figmaContext, nodeData)
+				} else if yaml.Unmarshal([]byte(chunkRaw), &nodeData) == nil {
+					figmaContext = append(figmaContext, nodeData)
+				} else {
+					logger.Warn("Failed to unmarshal chunk %s into nodeData", id)
+				}
+
 				prunedJSON, err := figma.PruneFigmaData(chunkRaw)
 				if err != nil {
+					logger.Warn("PruneFigmaData failed: %v", err)
 					prunedJSON = chunkRaw
 				}
 
@@ -189,6 +201,10 @@ var planCmd = &cobra.Command{
 		}
 
 		err = state.InitState(outDir, fileKey, masterPlan)
+		if err == nil && len(figmaContext) > 0 {
+			contextBytes, _ := json.Marshal(figmaContext)
+			os.WriteFile(outDir+"/.figgen/figma_context.json", contextBytes, 0644)
+		}
 		if err != nil {
 			logger.Fatal("Failed to save state: %v", err)
 		}

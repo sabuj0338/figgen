@@ -2,113 +2,120 @@
 {
   "components": [
     {
-      "name": "AppLogo",
-      "description": "Displays the application's main logo.",
-      "props": ["className"],
+      "name": "Logo",
+      "description": "Displays the application logo. This is a custom component wrapping the logo vectors.",
+      "props": ["className?: string", "width?: number", "height?: number"],
       "is_shadcn": false,
       "category": "Global",
-      "figma_node_id": "404:5721"
+      "figma_node_id": "404:5721, 404:5722"
     },
     {
-      "name": "BgImage",
-      "description": "A background image component for layout purposes.",
-      "props": ["src", "alt", "className"],
+      "name": "AuthLayout",
+      "description": "Provides the overall layout for authentication pages, including background image and centering of the content.",
+      "props": ["children: React.ReactNode"],
       "is_shadcn": false,
-      "category": "Global",
-      "figma_node_id": "404:5720"
+      "category": "Authentication",
+      "figma_node_id": "404:5719, 404:5720"
     },
     {
       "name": "Card",
-      "description": "A container for grouping related UI elements, as per Shadcn UI.",
-      "props": ["className", "children"],
+      "description": "A flexible content container, based on Shadcn UI's Card component.",
+      "props": ["children: React.ReactNode", "className?: string"],
       "is_shadcn": true,
       "category": "Global",
       "figma_node_id": "404:5735"
     },
     {
-      "name": "CardHeader",
-      "description": "The header section of a Card component, as per Shadcn UI.",
-      "props": ["className", "children"],
-      "is_shadcn": true,
-      "category": "Global",
+      "name": "LoginCardHeader",
+      "description": "Displays the title and an optional subtitle for the login form within the card.",
+      "props": ["title: string", "subtitle?: string", "className?: string"],
+      "is_shadcn": false,
+      "category": "Authentication",
       "figma_node_id": "404:5736"
     },
     {
-      "name": "CardContent",
-      "description": "The main content area of a Card component, as per Shadcn UI.",
-      "props": ["className", "children"],
-      "is_shadcn": true,
-      "category": "Global",
-      "figma_node_id": "404:5740"
+      "name": "LoginForm",
+      "description": "The interactive form component for user login, containing email and password inputs and a submit button. It uses React Hook Form and Zod for validation, and Shadcn UI atomic components.",
+      "props": ["onSuccess?: () => void", "onError?: (error: string) => void"],
+      "is_shadcn": false,
+      "category": "Authentication"
     },
     {
-      "name": "CardFooter",
-      "description": "The footer section of a Card component, as per Shadcn UI.",
-      "props": ["className", "children"],
-      "is_shadcn": true,
-      "category": "Global",
+      "name": "LoginCardFooter",
+      "description": "Contains supplementary links or actions for the login form, such as 'Forgot password' or 'Sign up'.",
+      "props": ["children: React.ReactNode", "className?: string"],
+      "is_shadcn": false,
+      "category": "Authentication",
       "figma_node_id": "404:5744"
     },
     {
-      "name": "Button",
-      "description": "A clickable button component, as per Shadcn UI.",
-      "props": ["onClick", "variant", "size", "className", "children"],
+      "name": "Input",
+      "description": "Standard text input field, derived from Shadcn UI.",
+      "props": ["type?: string", "placeholder?: string", "...rest"],
       "is_shadcn": true,
       "category": "Global"
     },
     {
-      "name": "Input",
-      "description": "A text input field component, as per Shadcn UI.",
-      "props": ["type", "placeholder", "value", "onChange", "className"],
+      "name": "Button",
+      "description": "Standard button for actions and form submissions, derived from Shadcn UI.",
+      "props": ["type?: 'submit' | 'button'", "variant?: 'default' | 'outline' | 'ghost' | 'link'", "disabled?: boolean", "children: React.ReactNode", "...rest"],
       "is_shadcn": true,
       "category": "Global"
     },
     {
       "name": "Label",
-      "description": "A label component for form elements, as per Shadcn UI.",
-      "props": ["htmlFor", "className", "children"],
+      "description": "Label for form inputs, derived from Shadcn UI.",
+      "props": ["htmlFor?: string", "children: React.ReactNode", "...rest"],
       "is_shadcn": true,
       "category": "Global"
     },
     {
-      "name": "Link",
-      "description": "A styled Next.js Link component for navigation.",
-      "props": ["href", "className", "children"],
-      "is_shadcn": false,
+      "name": "Field",
+      "description": "Provides a semantic structure for a form input, including label, control, description, and message, based on Shadcn UI's field component.",
+      "props": ["children: React.ReactNode", "...rest"],
+      "is_shadcn": true,
       "category": "Global"
     },
     {
-      "name": "LoginForm",
-      "description": "Form for user authentication, including input fields for credentials and a submit button.",
-      "props": ["onSubmit", "isLoading"],
-      "is_shadcn": false,
-      "category": "Authentication"
+      "name": "FieldControl",
+      "description": "Wrapper for the actual input element within a Field, based on Shadcn UI.",
+      "props": ["children: React.ReactNode", "...rest"],
+      "is_shadcn": true,
+      "category": "Global"
     },
     {
-      "name": "LoginCardLayout",
-      "description": "Layout specific to the login card, composing global Card elements and the LoginForm.",
-      "props": ["title", "description", "children"],
-      "is_shadcn": false,
-      "category": "Authentication"
+      "name": "FieldLabel",
+      "description": "The label for a form field, based on Shadcn UI.",
+      "props": ["children: React.ReactNode", "...rest"],
+      "is_shadcn": true,
+      "category": "Global"
+    },
+    {
+      "name": "FieldDescription",
+      "description": "Optional helper text for a form field, based on Shadcn UI.",
+      "props": ["children: React.ReactNode", "...rest"],
+      "is_shadcn": true,
+      "category": "Global"
+    },
+    {
+      "name": "FieldMessage",
+      "description": "Displays validation or error messages for a form field, based on Shadcn UI.",
+      "props": ["children: React.ReactNode", "...rest"],
+      "is_shadcn": true,
+      "category": "Global"
     }
   ],
   "pages": [
     {
       "name": "LoginPage",
-      "description": "The main login page, combining background image, logo, and the login form card.",
+      "description": "The main login page, composing various authentication-related components into a complete UI.",
       "components": [
-        "BgImage",
-        "AppLogo",
-        "LoginCardLayout",
-        "LoginForm",
+        "AuthLayout",
+        "Logo",
         "Card",
-        "CardHeader",
-        "CardContent",
-        "CardFooter",
-        "Input",
-        "Label",
-        "Button",
-        "Link"
+        "LoginCardHeader",
+        "LoginForm",
+        "LoginCardFooter"
       ],
       "category": "Authentication",
       "figma_node_id": "404:5719"
