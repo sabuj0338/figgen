@@ -57,20 +57,19 @@ go build -o figgen
 
 Ensure your `figgen.config.yaml` is present in the root directory. This tells the AI what framework you are using and what boilerplate repository to clone.
 
-### Step 3: Plan the Architecture (Using the Local Plugin)
+### Step 3: Plan the Architecture
 
-We use a local WebSocket bridge to bypass Figma's cloud API rate limits entirely.
+We use the Model Context Protocol (MCP) to securely connect to Figma and extract the deep layout and semantic context of a specific design node directly via its URL.
 
-1. **Install the Plugin (One-time):** Open Figma > Plugins > Development > Import plugin from manifest. Select the `manifest.json` inside the `./figma-plugin` folder of this repository.
-2. **Start the Listener:** In your terminal, run the `listen` command. This will clone your boilerplate to `./out` and wait for data.
+1. **Get the Figma URL:** Open your Figma file, select the specific component, frame, or page you want to generate, and copy its URL from the browser (it must contain a `?node-id=...` parameter).
+2. **Run the Planner:** In your terminal, run the `plan` command. This will clone your configured Next.js boilerplate to `./out`, start the local MCP server to fetch the design, and run the AI Architecture Planner.
 
 ```bash
-# Start the local WebSocket server
-./figgen listen
+# Start the planner with your specific Figma node URL
+./figgen plan --figma "https://www.figma.com/design/your_file_id/File-Name?node-id=123-456"
 ```
 
-3. **Export from Figma:** Select a component or page in your Figma canvas, open the "Figgen Exporter" plugin, and click **Export**.
-4. The Go server will instantly receive the data, run the AI Planner, and save the execution state to `./out/.figgen/tasks.json` and `./out/.figgen/tasks.md`.
+3. The Go server will fetch the node, parse the design tree, run the AI Planner, and save the execution state to `./out/.figgen/tasks.json` and `./out/.figgen/tasks.md`. It also saves the raw Figma data to `./out/.figgen/figma_context.json` for code generation.
 
 ### Step 4: Execute the Tasks
 
