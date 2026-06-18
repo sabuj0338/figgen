@@ -71,6 +71,21 @@ We use the Model Context Protocol (MCP) to securely connect to Figma and extract
 
 3. The Go server will fetch the node, parse the design tree, run the AI Planner, and save the execution state to `./out/.figgen/tasks.json` and `./out/.figgen/tasks.md`. It also saves the raw Figma data to `./out/.figgen/figma_context.json` for code generation.
 
+### Alternative Step 3: Plan the Architecture (Using the Local Plugin)
+
+We also provide a local WebSocket bridge to bypass Figma's cloud API rate limits entirely if you prefer not to use the URL-based MCP method.
+
+1. **Install the Plugin (One-time):** Open Figma > Plugins > Development > Import plugin from manifest. Select the `manifest.json` inside the `./figma-plugin` folder of this repository.
+2. **Start the Listener:** In your terminal, run the `listen` command. This will clone your boilerplate to `./out` and wait for data.
+
+```bash
+# Start the local WebSocket server
+./figgen listen
+```
+
+3. **Export from Figma:** Select a component or page in your Figma canvas, open the "Figgen Exporter" plugin, and click **Export**.
+4. The Go server will instantly receive the data, run the AI Planner, and save the execution state to `./out/.figgen/tasks.json` and `./out/.figgen/tasks.md`.
+
 ### Step 4: Execute the Tasks
 
 Run the `run` command to start the AI Coder. It will read the `tasks.json` state, pick the first uncompleted task, generate the React code, and write it to the filesystem (e.g., `src/components/ui/Button.tsx`).
