@@ -5,8 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/sabujislam/figgen/internal/config"
+)
+
+// Output token caps per stage (Phase 6). Planning output is small structured
+// JSON; coding output can be large.
+const (
+	PlannerMaxOutputTokens = 8192
+	// CoderMaxOutputTokens is generous because a single component/page can emit
+	// a lot of TSX. Providers clamp this to their model's hard ceiling (e.g.
+	// legacy Claude 3.5 caps at 8192), so requesting more is safe.
+	CoderMaxOutputTokens = 16384
 )
 
 type PlannerResponse struct {
@@ -30,19 +41,19 @@ type PagePlan struct {
 	FigmaNodeID string   `json:"figma_node_id"`
 }
 
-func RunPlanner(ctx context.Context, ai LLMProvider, cfg *config.Config, mcpContext string) (*PlannerResponse, error) {
-	// Serialize inputs for prompt without indentation to save tokens
+// plannerStaticPrefix builds the cacheable instruction/rules/config block that
+// is identical for every planner call in a run.
+func plannerStaticPrefix(cfg *config.Config) string {
 	configJSON, _ := json.Marshal(cfg)
 
-	prompt := fmt.Sprintf(`You are an expert Frontend Next.js Architecture Planner.
-Analyze the following Figma Design semantic context and the provided project configuration.
-Create a structured component generation plan. Group components and pages into logical modules using the "category" field (e.g. "Authentication", "Dashboard", "Settings"). For shared/generic UI elements, use the category "Global".
-CRITICAL: You MUST break down large layouts into granular, reusable components (e.g. HeroSection, FeatureList, Footer). Do NOT output a single massive component for the entire page.
+	return fmt.Sprintf(`You are an expert Frontend Next.js Architecture Planner.
+Analyze the provided Figma Design semantic context and the project configuration, then create a structured component generation plan.
+Group components and pages into logical modules using the "category" field (e.g. "Authentication", "Dashboard", "Settings"). For shared/generic UI elements, use the category "Global".
+CRITICAL: Break down large layouts into granular, reusable components (e.g. HeroSection, FeatureList, Footer). Do NOT output a single massive component for an entire page.
 
 CRITICAL MIXED APPROACH FOR SHADCN:
-Evaluate the Figma semantic context to determine the component architecture:
-1. If the node explicitly matches a standard Shadcn UI atomic component (e.g., Button, Input, Select, Dialog), set "is_shadcn": true.
-2. If the node is a custom layout, group of vectors, or complex section (e.g., HeroSection, FeatureCard, NavigationBar) that does NOT directly map to a standard atomic component, set "is_shadcn": false. The agent will design these independently using raw Tailwind.
+1. If a node matches a standard Shadcn UI atomic component (Button, Input, Select, Dialog, etc.), set "is_shadcn": true.
+2. If a node is a custom layout or complex section (HeroSection, FeatureCard, NavigationBar) that does NOT map to a standard atomic component, set "is_shadcn": false.
 
 Configuration Rules:
 %s
@@ -50,41 +61,105 @@ Configuration Rules:
 Engineering Guidelines:
 %s
 
-Figma Semantic Design Context (from MCP):
-%s
-
-Output JSON in this exact structure:
+Output a JSON object with this exact structure:
 {
   "components": [
-    {
-      "name": "Button",
-      "description": "Primary action button",
-      "props": ["onClick", "variant"],
-      "is_shadcn": true,
-      "category": "Global",
-      "figma_node_id": "0:1"
-    }
+    {"name": "Button", "description": "Primary action button", "props": ["onClick", "variant"], "is_shadcn": true, "category": "Global", "figma_node_id": "0:1"}
   ],
   "pages": [
-    {
-      "name": "Dashboard",
-      "components": ["Button", "Sidebar"],
-      "category": "Dashboard",
-      "figma_node_id": "0:2"
-    }
+    {"name": "Dashboard", "components": ["Button", "Sidebar"], "category": "Dashboard", "figma_node_id": "0:2"}
   ]
-}`, string(configJSON), cfg.PlannerRulesContent, mcpContext)
+}`, string(configJSON), cfg.PlannerRulesContent)
+}
 
-	rawJSON, err := ai.GenerateJSON(ctx, prompt)
+func RunPlanner(ctx context.Context, ai LLMProvider, cfg *config.Config, mcpContext string) (*PlannerResponse, error) {
+	dynamic := fmt.Sprintf("Figma Semantic Design Context (from MCP):\n%s", mcpContext)
+
+	result, err := ai.GenerateJSON(ctx, GenerateRequest{
+		StaticPrefix:    plannerStaticPrefix(cfg),
+		Dynamic:         dynamic,
+		Stage:           StagePlan,
+		Label:           "planner",
+		MaxOutputTokens: PlannerMaxOutputTokens,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("ai generation failed: %w", err)
 	}
 
 	var plan PlannerResponse
-	if err := json.Unmarshal([]byte(rawJSON), &plan); err != nil {
-		os.WriteFile("debug_planner.json", []byte(rawJSON), 0644)
+	if err := json.Unmarshal([]byte(result.Text), &plan); err != nil {
+		if Debug {
+			os.WriteFile("debug_planner.json", []byte(result.Text), 0644)
+		}
 		return nil, fmt.Errorf("failed to parse AI JSON response: %w", err)
 	}
 
+	ApplyShadcnHeuristics(&plan)
 	return &plan, nil
+}
+
+// knownShadcnComponents maps lowercased names to standard shadcn/ui atoms that
+// should be installed rather than generated by the AI.
+var knownShadcnComponents = map[string]bool{
+	"button": true, "input": true, "select": true, "dialog": true, "checkbox": true,
+	"radio": true, "switch": true, "textarea": true, "label": true, "badge": true,
+	"card": true, "avatar": true, "tooltip": true, "popover": true, "dropdown": true,
+	"dropdownmenu": true, "tabs": true, "accordion": true, "alert": true, "table": true,
+	"slider": true, "progress": true, "skeleton": true, "separator": true, "calendar": true,
+	"toast": true, "sheet": true, "breadcrumb": true, "pagination": true, "command": true,
+}
+
+// IsKnownShadcn reports whether the component name is a standard shadcn/ui atom.
+func IsKnownShadcn(name string) bool {
+	key := strings.ToLower(strings.ReplaceAll(name, " ", ""))
+	return knownShadcnComponents[key]
+}
+
+// ApplyShadcnHeuristics deterministically marks components that are clearly
+// standard shadcn/ui atoms as is_shadcn, regardless of the model's guess. This
+// lets the runner install them instead of spending a full codegen call.
+func ApplyShadcnHeuristics(plan *PlannerResponse) {
+	if plan == nil {
+		return
+	}
+	for i := range plan.Components {
+		if IsKnownShadcn(plan.Components[i].Name) {
+			plan.Components[i].IsShadcn = true
+		}
+	}
+}
+
+// ValidatePlan checks a PlannerResponse for structural problems before it is
+// persisted to the task state.
+func ValidatePlan(plan *PlannerResponse) error {
+	if plan == nil {
+		return fmt.Errorf("plan is nil")
+	}
+	if len(plan.Components) == 0 && len(plan.Pages) == 0 {
+		return fmt.Errorf("plan contains no components or pages")
+	}
+
+	seen := make(map[string]bool)
+	for i, comp := range plan.Components {
+		if comp.Name == "" {
+			return fmt.Errorf("component at index %d has an empty name", i)
+		}
+		if seen[comp.Name] {
+			return fmt.Errorf("duplicate component name %q", comp.Name)
+		}
+		seen[comp.Name] = true
+	}
+
+	for i, page := range plan.Pages {
+		if page.Name == "" {
+			return fmt.Errorf("page at index %d has an empty name", i)
+		}
+		for _, dep := range page.Components {
+			if !seen[dep] {
+				return fmt.Errorf("page %q references unknown component %q", page.Name, dep)
+			}
+		}
+	}
+
+	return nil
 }

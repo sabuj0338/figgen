@@ -17,6 +17,7 @@ import (
 	"github.com/sabujislam/figgen/internal/logger"
 	"github.com/sabujislam/figgen/internal/mcp"
 	"github.com/sabujislam/figgen/internal/state"
+	"github.com/sabujislam/figgen/internal/telemetry"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -42,10 +43,15 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 		logger.Fatal("Failed to load configuration: %v", err)
 	}
 
+	telemetry.Init(outDir)
+
 	if cfg.BoilerplateURL != "" {
 		err = github.CloneRepository(cfg.BoilerplateURL, outDir)
 		if err != nil {
 			logger.Fatal("Failed to clone boilerplate: %v", err)
+		}
+		if err = github.BootstrapDependencies(outDir, cfg.PackageManager); err != nil {
+			logger.Warn("Failed to install boilerplate dependencies: %v", err)
 		}
 	}
 
@@ -56,6 +62,9 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 		if provider == "" {
 			provider = "gemini"
 		}
+	}
+	if model == "" {
+		model = cfg.CoderModel
 	}
 	if model == "" {
 		model = os.Getenv("DEFAULT_MODEL")
@@ -86,10 +95,17 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 
 		var targetTask *state.Task
 		var taskIndex int
-		for i, t := range st.Tasks {
-			if t.Status == "pending" {
-				targetTask = &st.Tasks[i]
-				taskIndex = i
+		// Prefer pending components before pages so a page's required
+		// components are generated first, regardless of slice ordering.
+		for _, wantType := range []string{"component", "page"} {
+			for i, t := range st.Tasks {
+				if t.Status == "pending" && t.Type == wantType {
+					targetTask = &st.Tasks[i]
+					taskIndex = i
+					break
+				}
+			}
+			if targetTask != nil {
 				break
 			}
 		}
@@ -317,10 +333,16 @@ func ExecuteRun(outDir string, isAll bool, configPath string, provider string, m
 
 		// Post-Generation Processing (Executor)
 		if err == nil && codeResp != nil {
-			_ = executor.InstallDependencies(outDir, cfg.PackageManager, codeResp.Dependencies)
-			_ = executor.InstallShadcn(outDir, cfg.PackageManager, codeResp.ShadcnComponents)
+			if depErr := executor.InstallDependencies(outDir, cfg.PackageManager, codeResp.Dependencies); depErr != nil {
+				logger.Warn("Dependency installation failed for %s: %v", targetTask.Name, depErr)
+			}
+			if shadcnErr := executor.InstallShadcn(outDir, cfg.PackageManager, codeResp.ShadcnComponents); shadcnErr != nil {
+				logger.Warn("shadcn/ui installation failed for %s: %v", targetTask.Name, shadcnErr)
+			}
 			if targetFilePath != "" {
-				_ = executor.LintFile(outDir, cfg.PackageManager, targetFilePath)
+				if lintErr := executor.LintFile(outDir, cfg.PackageManager, targetFilePath); lintErr != nil {
+					logger.Warn("Formatting failed for %s: %v", targetFilePath, lintErr)
+				}
 			}
 
 			// Inject Translations into en.json

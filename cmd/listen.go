@@ -14,6 +14,7 @@ import (
 	"github.com/sabujislam/figgen/internal/github"
 	"github.com/sabujislam/figgen/internal/logger"
 	"github.com/sabujislam/figgen/internal/state"
+	"github.com/sabujislam/figgen/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +26,15 @@ var (
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow from local Figma plugin
+		// The Figma plugin iframe is sandboxed, so its Origin is empty or "null".
+		// Accept those plus local origins, but reject arbitrary remote sites.
+		origin := r.Header.Get("Origin")
+		if origin == "" || origin == "null" {
+			return true
+		}
+		return strings.HasPrefix(origin, "http://localhost") ||
+			strings.HasPrefix(origin, "http://127.0.0.1") ||
+			strings.HasSuffix(origin, ".figma.com")
 	},
 }
 
@@ -34,6 +43,7 @@ var listenCmd = &cobra.Command{
 	Short: "Start a local WebSocket server to receive data directly from the Figma Plugin",
 	Run: func(cmd *cobra.Command, args []string) {
 		outDir := globalOutDir
+		telemetry.Init(outDir)
 		cfg, err := config.LoadConfig(listenConfigPath)
 		if err != nil {
 			logger.Fatal("Failed to load configuration: %v", err)
@@ -44,6 +54,9 @@ var listenCmd = &cobra.Command{
 			if err != nil {
 				logger.Fatal("Failed to clone boilerplate: %v", err)
 			}
+			if err = github.BootstrapDependencies(outDir, cfg.PackageManager); err != nil {
+				logger.Warn("Failed to install boilerplate dependencies: %v", err)
+			}
 		}
 
 		ctx := context.Background()
@@ -53,6 +66,9 @@ var listenCmd = &cobra.Command{
 			if listenProvider == "" {
 				listenProvider = "gemini"
 			}
+		}
+		if listenModel == "" {
+			listenModel = cfg.CoderModel
 		}
 		if listenModel == "" {
 			listenModel = os.Getenv("DEFAULT_MODEL")
@@ -106,6 +122,11 @@ var listenCmd = &cobra.Command{
 					continue
 				}
 
+				if vErr := agents.ValidatePlan(plan); vErr != nil {
+					logger.Error("Generated plan is invalid: %v. Waiting for a new design payload...", vErr)
+					continue
+				}
+
 				fileKey := "local"
 				figmaURL := os.Getenv("FIGMA_URL")
 				if figmaURL != "" {
@@ -146,8 +167,9 @@ var listenCmd = &cobra.Command{
 		port := "8080"
 		logger.Info("Figgen WebSocket Listener running on ws://localhost:%s/ws", port)
 		logger.Info("Open your local Figgen Exporter plugin in Figma and click Export!")
-		
-		if err := http.ListenAndServe(":"+port, nil); err != nil {
+
+		// Bind to loopback only so the listener is not exposed on the network.
+		if err := http.ListenAndServe("127.0.0.1:"+port, nil); err != nil {
 			logger.Fatal("Server failed: %v", err)
 		}
 	},

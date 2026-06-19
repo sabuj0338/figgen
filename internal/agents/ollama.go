@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/sabujislam/figgen/internal/telemetry"
 )
 
 type OllamaProvider struct {
@@ -21,16 +23,19 @@ type ollamaOptions struct {
 }
 
 type ollamaRequest struct {
-	Model   string         `json:"model"`
-	Prompt  string         `json:"prompt"`
-	Stream  bool           `json:"stream"`
-	Format  string         `json:"format,omitempty"`
-	Options ollamaOptions  `json:"options"`
+	Model   string        `json:"model"`
+	Prompt  string        `json:"prompt"`
+	Stream  bool          `json:"stream"`
+	Format  string        `json:"format,omitempty"`
+	Options ollamaOptions `json:"options"`
 }
 
 type ollamaResponse struct {
-	Response string `json:"response"`
-	Error    string `json:"error,omitempty"`
+	Response        string `json:"response"`
+	DoneReason      string `json:"done_reason"`
+	PromptEvalCount int    `json:"prompt_eval_count"`
+	EvalCount       int    `json:"eval_count"`
+	Error           string `json:"error,omitempty"`
 }
 
 func NewOllamaProvider(modelName string) (*OllamaProvider, error) {
@@ -44,56 +49,73 @@ func NewOllamaProvider(modelName string) (*OllamaProvider, error) {
 	}, nil
 }
 
-func (o *OllamaProvider) GenerateJSON(ctx context.Context, prompt string) (string, error) {
-	// Add instruction to output JSON if missing
-	prompt = prompt + "\n\nIMPORTANT: You must respond ONLY with valid JSON."
+func (o *OllamaProvider) GenerateJSON(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
+	numPredict := req.MaxOutputTokens
+	if numPredict == 0 {
+		numPredict = 4096
+	}
 
 	reqBody := ollamaRequest{
 		Model:  o.model,
-		Prompt: prompt,
+		Prompt: req.CombinedPrompt(),
 		Stream: false,
 		Format: "json", // Forces JSON output in modern Ollama versions
 		Options: ollamaOptions{
-			NumCtx:     16384, // Maximize context window for Figma/React syntax
-			NumPredict: 4096,  // Allow massive code outputs without truncation
+			NumCtx:     16384,
+			NumPredict: numPredict,
 		},
 	}
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", o.baseURL+"/api/generate", bytes.NewBuffer(jsonData))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", o.baseURL+"/api/generate", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("ollama request failed (is Ollama running?): %w", err)
+		return nil, fmt.Errorf("ollama request failed (is Ollama running?): %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		return nil, fmt.Errorf("ollama returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var resData ollamaResponse
 	if err := json.Unmarshal(bodyBytes, &resData); err != nil {
-		return "", fmt.Errorf("failed to parse ollama response: %w", err)
+		return nil, fmt.Errorf("failed to parse ollama response: %w", err)
 	}
 
 	if resData.Error != "" {
-		return "", fmt.Errorf("ollama error: %s", resData.Error)
+		return nil, fmt.Errorf("ollama error: %s", resData.Error)
 	}
 
-	return CleanJSONResponse(resData.Response), nil
+	usage := Usage{
+		InputTokens:  resData.PromptEvalCount,
+		OutputTokens: resData.EvalCount,
+	}
+
+	telemetry.Add(telemetry.Record{
+		Stage: req.Stage, Label: req.Label, Provider: "ollama", Model: o.model,
+		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+	})
+
+	return &GenerateResult{
+		Text:         CleanJSONResponse(resData.Response),
+		Usage:        usage,
+		Truncated:    resData.DoneReason == "length",
+		FinishReason: resData.DoneReason,
+	}, nil
 }

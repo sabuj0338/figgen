@@ -1,11 +1,19 @@
 framework: nextjs16
 boilerplate_url: "https://github.com/sabuj0338/nextjs-light-boilerplate.git"
 package_manager: "pnpm"
+
+# Optional: route planning and coding to different models to control cost.
+# Falls back to DEFAULT_MODEL / provider default when empty.
+planner_model: ""
+coder_model: ""
+
 planner_rules:
   - "rules/planning_rules_summary.md"
+# Only the condensed ruleset is injected into every coder call to save tokens.
+# The full setup guide (nextjs-project-setup-guide-light.md) is kept for humans
+# and intentionally NOT sent to the model.
 coder_rules:
-  - "./rules/AI_AGENT_RULES.md"
-  - "./rules/nextjs-project-setup-guide-light.md"
+  - "./rules/coder_rules_condensed.md"
 dependencies:
   ui:
     - shadcn

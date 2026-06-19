@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 
 	"github.com/sabujislam/figgen/internal/agents"
 	"github.com/sabujislam/figgen/internal/config"
@@ -12,16 +13,17 @@ import (
 	"github.com/sabujislam/figgen/internal/logger"
 	"github.com/sabujislam/figgen/internal/mcp"
 	"github.com/sabujislam/figgen/internal/state"
+	"github.com/sabujislam/figgen/internal/telemetry"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
 
 var (
-	planFigmaURL   string
-	planPage       string
-	planConfigPath string
-	planProvider   string
-	planModel      string
+	planFigmaURL    string
+	planConfigPath  string
+	planProvider    string
+	planModel       string
+	planBatchTokens int
 )
 
 var planCmd = &cobra.Command{
@@ -43,10 +45,14 @@ var planCmd = &cobra.Command{
 		}
 
 		outDir := globalOutDir
+		telemetry.Init(outDir)
 		if cfg.BoilerplateURL != "" {
 			err = github.CloneRepository(cfg.BoilerplateURL, outDir)
 			if err != nil {
 				logger.Fatal("Failed to clone boilerplate: %v", err)
+			}
+			if err = github.BootstrapDependencies(outDir, cfg.PackageManager); err != nil {
+				logger.Warn("Failed to install boilerplate dependencies: %v", err)
 			}
 		}
 
@@ -69,6 +75,9 @@ var planCmd = &cobra.Command{
 			if planProvider == "" {
 				planProvider = "gemini"
 			}
+		}
+		if planModel == "" {
+			planModel = cfg.PlannerModel
 		}
 		if planModel == "" {
 			planModel = os.Getenv("DEFAULT_MODEL")
@@ -144,9 +153,54 @@ var planCmd = &cobra.Command{
 
 		masterPlan := &agents.PlannerResponse{}
 		var figmaContext []interface{}
+		seenComponents := make(map[string]bool)
+
+		// mergePlan folds a planner result into the master plan, de-duplicating
+		// components by name so shared elements don't create duplicate tasks.
+		mergePlan := func(plan *agents.PlannerResponse) {
+			if plan == nil {
+				return
+			}
+			for _, c := range plan.Components {
+				if c.Name == "" || seenComponents[c.Name] {
+					continue
+				}
+				seenComponents[c.Name] = true
+				masterPlan.Components = append(masterPlan.Components, c)
+			}
+			for _, p := range plan.Pages {
+				if p.Name == "" {
+					continue
+				}
+				masterPlan.Pages = append(masterPlan.Pages, p)
+			}
+		}
+
+		// Batch multiple pruned chunks into a single planner call up to a token
+		// budget so rules/config aren't re-sent once per top-level frame.
+		budgetChars := planBatchTokens * 4
+		if budgetChars <= 0 {
+			budgetChars = 12000
+		}
+		var batch []string
+		batchChars := 0
+		flush := func() {
+			if len(batch) == 0 {
+				return
+			}
+			combined := strings.Join(batch, "\n---\n")
+			plan, err := agents.RunPlanner(ctx, aiClient, cfg, combined)
+			if err != nil {
+				logger.Warn("AI Planner failed for batch of %d chunk(s): %v", len(batch), err)
+			} else {
+				mergePlan(plan)
+			}
+			batch = nil
+			batchChars = 0
+		}
 
 		for i, id := range targetIDs {
-			logger.Info("Planning chunk %d/%d (Node %s)...", i+1, len(targetIDs), id)
+			logger.Info("Fetching chunk %d/%d (Node %s)...", i+1, len(targetIDs), id)
 			chunkArgs := map[string]interface{}{
 				"fileKey": fileKey,
 				"depth":   2,
@@ -186,18 +240,18 @@ var planCmd = &cobra.Command{
 					prunedJSON = chunkRaw
 				}
 
-				plan, err := agents.RunPlanner(ctx, aiClient, cfg, prunedJSON)
-				if err != nil {
-					logger.Info("Warning: AI Planner failed for chunk %s: %v", id, err)
-					continue
+				// Flush before adding a chunk that would exceed the budget.
+				if batchChars > 0 && batchChars+len(prunedJSON) > budgetChars {
+					flush()
 				}
-
-				// Merge into master plan
-				if plan != nil {
-					masterPlan.Components = append(masterPlan.Components, plan.Components...)
-					masterPlan.Pages = append(masterPlan.Pages, plan.Pages...)
-				}
+				batch = append(batch, prunedJSON)
+				batchChars += len(prunedJSON)
 			}
+		}
+		flush()
+
+		if vErr := agents.ValidatePlan(masterPlan); vErr != nil {
+			logger.Warn("Plan validation warning: %v", vErr)
 		}
 
 		err = state.InitState(outDir, fileKey, masterPlan)
@@ -217,8 +271,8 @@ var planCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(planCmd)
 	planCmd.Flags().StringVar(&planFigmaURL, "figma", "", "Figma URL to generate from (can also use FIGMA_URL env var)")
-	planCmd.Flags().StringVar(&planPage, "page", "", "Specific page name in Figma")
 	planCmd.Flags().StringVar(&planConfigPath, "config", "figgen.config.yaml", "Path to configuration file")
 	planCmd.Flags().StringVar(&planProvider, "provider", "", "LLM Provider (gemini, openai, anthropic, ollama). Overrides .env")
-	planCmd.Flags().StringVar(&planModel, "model", "", "LLM Model Name. Overrides .env")
+	planCmd.Flags().StringVar(&planModel, "model", "", "LLM Model Name. Overrides .env and config planner_model")
+	planCmd.Flags().IntVar(&planBatchTokens, "batch-tokens", 3000, "Approx token budget per planner call when batching frames (0 = default)")
 }

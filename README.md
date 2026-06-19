@@ -103,12 +103,30 @@ Run the `run` command to start the AI Coder. It will read the `tasks.json` state
 
 > **Tip:** Open `./out/.figgen/tasks.md` in your editor while running `./figgen run --all` to watch the tasks get checked off in real time!
 
+### Step 5: Inspect & Recover
+
+Check progress at any time, or reset failed tasks so you can re-run them:
+
+```bash
+# Print a per-category breakdown of completed / pending / failed tasks
+./figgen status
+
+# Reset any failed tasks back to pending, then continue generating
+./figgen retry
+./figgen run --all
+
+# Also reset tasks stuck in "in_progress" (e.g. after a crash)
+./figgen retry --stuck
+```
+
 ## 📂 Project Structure
 
-- `cmd/`: Cobra CLI commands (`plan` and `run`).
-- `internal/agents/`: Gemini integration (`planner.go`, `coder.go`).
+- `cmd/`: Cobra CLI commands (`plan`, `run`, `listen`, `status`, and `retry`).
+- `internal/agents/`: Multi-provider AI integration (Gemini, OpenAI, Anthropic, Ollama) with `planner.go` and `coder.go`.
 - `internal/config/`: Configuration parsing.
-- `internal/figma/`: Figma REST API extraction.
+- `internal/figma/`: Figma REST API extraction, asset downloads, and data pruning.
+- `internal/mcp/`: Model Context Protocol client used to fetch semantic design context.
+- `internal/executor/`: Post-generation steps (dependency install, shadcn/ui add, prettier formatting).
 - `internal/filesystem/`: Writes generated code to the local target directories.
-- `internal/github/`: Auto-clones Next.js boilerplates.
+- `internal/github/`: Auto-clones Next.js boilerplates and installs their dependencies.
 - `internal/state/`: Manages the iterative `tasks.json` execution tracker.

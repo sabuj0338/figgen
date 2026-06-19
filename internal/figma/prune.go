@@ -9,6 +9,24 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaxChildrenPerNode caps how many child nodes are kept per parent during
+// pruning (0 = unlimited). Bounding this prevents pathologically large/repeated
+// Figma trees from exploding the prompt. Set from the --max-children flag.
+var MaxChildrenPerNode = 0
+
+// capChildren truncates an overly large children array in-place, recording how
+// many were dropped so the model still understands the layout is a list.
+func capChildren(v map[string]interface{}) {
+	if MaxChildrenPerNode <= 0 {
+		return
+	}
+	if children, ok := v["children"].([]interface{}); ok && len(children) > MaxChildrenPerNode {
+		omitted := len(children) - MaxChildrenPerNode
+		v["children"] = children[:MaxChildrenPerNode]
+		v["_omitted_children"] = omitted
+	}
+}
+
 // PruneFigmaData aggressively strips out heavy layout and style data
 // from the raw Figma YAML/JSON returned by the MCP server, to save LLM tokens.
 func PruneFigmaData(raw string) (string, error) {
@@ -46,6 +64,8 @@ func walkAndPrune(node interface{}) interface{} {
 		for _, k := range keysToRemove {
 			delete(v, k)
 		}
+
+		capChildren(v)
 
 		for key, val := range v {
 			if arr, ok := val.([]interface{}); ok && len(arr) == 0 {
@@ -129,6 +149,8 @@ func walkAndPruneForCoder(node interface{}) interface{} {
 			}
 			delete(v, "style")
 		}
+
+		capChildren(v)
 
 		for key, val := range v {
 			if arr, ok := val.([]interface{}); ok && len(arr) == 0 {

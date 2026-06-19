@@ -6,12 +6,14 @@ import (
 	"os"
 
 	"github.com/google/generative-ai-go/genai"
+	"github.com/sabujislam/figgen/internal/telemetry"
 	"google.golang.org/api/option"
 )
 
 type GeminiProvider struct {
 	client *genai.Client
-	model  *genai.GenerativeModel
+	model  string
+	ctx    context.Context
 }
 
 func NewGeminiProvider(ctx context.Context, modelName string) (*GeminiProvider, error) {
@@ -25,22 +27,39 @@ func NewGeminiProvider(ctx context.Context, modelName string) (*GeminiProvider, 
 		return nil, fmt.Errorf("failed to create genai client: %w", err)
 	}
 
-	model := client.GenerativeModel(modelName)
-
 	return &GeminiProvider{
 		client: client,
-		model:  model,
+		model:  modelName,
+		ctx:    ctx,
 	}, nil
 }
 
-func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string) (string, error) {
-	resp, err := g.model.GenerateContent(ctx, genai.Text(prompt))
-	if err != nil {
-		return "", fmt.Errorf("gemini generation failed: %w", err)
+func (g *GeminiProvider) GenerateJSON(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
+	model := g.client.GenerativeModel(g.model)
+
+	// JSON mode removes the need for prose instructions about valid JSON.
+	model.GenerationConfig.ResponseMIMEType = "application/json"
+	if req.MaxOutputTokens > 0 {
+		mt := int32(req.MaxOutputTokens)
+		model.GenerationConfig.MaxOutputTokens = &mt
 	}
 
-	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return "", fmt.Errorf("no response from Gemini")
+	// The static prefix goes into the system instruction. Gemini 2.x applies
+	// implicit caching to a stable system instruction + leading context, so
+	// keeping this identical across calls earns cache discounts automatically.
+	if req.StaticPrefix != "" {
+		model.SystemInstruction = &genai.Content{
+			Parts: []genai.Part{genai.Text(req.StaticPrefix)},
+		}
+	}
+
+	resp, err := model.GenerateContent(ctx, genai.Text(req.Dynamic))
+	if err != nil {
+		return nil, fmt.Errorf("gemini generation failed: %w", err)
+	}
+
+	if len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil || len(resp.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("no response from Gemini")
 	}
 
 	var fullText string
@@ -49,12 +68,31 @@ func (g *GeminiProvider) GenerateJSON(ctx context.Context, prompt string) (strin
 			fullText += string(txt)
 		}
 	}
-	
 	if fullText == "" {
-		return "", fmt.Errorf("unexpected AI response format")
+		return nil, fmt.Errorf("unexpected AI response format")
 	}
 
-	os.WriteFile("debug_fulltext.txt", []byte(fullText), 0644)
+	if Debug {
+		_ = os.WriteFile("debug_fulltext.txt", []byte(fullText), 0644)
+	}
 
-	return CleanJSONResponse(fullText), nil
+	usage := Usage{}
+	if resp.UsageMetadata != nil {
+		usage.InputTokens = int(resp.UsageMetadata.PromptTokenCount)
+		usage.OutputTokens = int(resp.UsageMetadata.CandidatesTokenCount)
+		usage.CachedTokens = int(resp.UsageMetadata.CachedContentTokenCount)
+	}
+
+	telemetry.Add(telemetry.Record{
+		Stage: req.Stage, Label: req.Label, Provider: "gemini", Model: g.model,
+		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CachedTokens: usage.CachedTokens,
+	})
+
+	finishReason := resp.Candidates[0].FinishReason
+	return &GenerateResult{
+		Text:         CleanJSONResponse(fullText),
+		Usage:        usage,
+		Truncated:    finishReason == genai.FinishReasonMaxTokens,
+		FinishReason: finishReason.String(),
+	}, nil
 }

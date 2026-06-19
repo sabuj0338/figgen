@@ -2,6 +2,9 @@
 figgen
 figgen.exe
 
+# Debug artifacts written on planner JSON parse failures
+debug_planner.json
+
 # Environment variables (NEVER COMMIT API KEYS)
 .env
 

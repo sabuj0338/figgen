@@ -5,21 +5,26 @@ This document outlines the strict technical guidelines and architectural rules f
 ## 1. Core Technology Stack
 - **Language:** Golang (1.21+ recommended)
 - **CLI Framework:** `github.com/spf13/cobra`
-- **AI Model:** Gemini API via `github.com/google/generative-ai-go/genai`
+- **AI Model:** Multi-provider via a shared `LLMProvider` interface (`internal/agents`). Supported providers: Gemini (`github.com/google/generative-ai-go/genai`), OpenAI, Anthropic, and Ollama.
 - **Configuration:** YAML (`gopkg.in/yaml.v3`)
-- **Figma Integration:** Standard `net/http` to Figma REST API (No external MCP servers).
+- **Figma Integration:** Semantic design context is fetched via the Model Context Protocol using the `figma-developer-mcp` server (`internal/mcp`). The standard `net/http` Figma REST API client (`internal/figma`) is still used for downloading image and SVG assets.
 - **Visual QA:** `github.com/playwright-community/playwright-go` (Future Phase)
 
 ## 2. Directory Structure & Architecture
 Strictly follow standard Go project layout:
 ```text
 /
-├── cmd/           # Cobra CLI commands
+├── cmd/           # Cobra CLI commands (plan, run, listen, status, retry, usage)
 ├── internal/      # Private application code
 │   ├── config/    # YAML parsing logic
-│   ├── figma/     # Figma REST client and types
-│   ├── agents/    # AI interaction logic (Gemini wrapper)
-│   ├── github/    # Git cloning logic
+│   ├── figma/     # Figma REST client, types, and token-aware data pruning
+│   ├── mcp/       # Model Context Protocol client (figma-developer-mcp)
+│   ├── agents/    # AI interaction logic (multi-provider planner/coder)
+│   ├── github/    # Git cloning and dependency bootstrap
+│   ├── executor/  # Post-generation: deps, shadcn, prettier
+│   ├── state/     # Stateful task tracker (tasks.json / tasks.md)
+│   ├── telemetry/ # Per-call LLM token usage logging (.figgen/usage.json)
+│   ├── logger/    # Console logging helpers
 │   └── filesystem/# File writing and structuring
 ├── main.go        # Entry point
 └── go.mod         # Module definition

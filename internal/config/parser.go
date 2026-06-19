@@ -17,6 +17,8 @@ type Config struct {
 	Framework           string       `yaml:"framework"`
 	BoilerplateURL      string       `yaml:"boilerplate_url"`
 	PackageManager      string       `yaml:"package_manager"`
+	PlannerModel        string       `yaml:"planner_model"`
+	CoderModel          string       `yaml:"coder_model"`
 	PlannerRules        []string     `yaml:"planner_rules"`
 	CoderRules          []string     `yaml:"coder_rules"`
 	PlannerRulesContent string       `yaml:"-"` // Injected dynamically

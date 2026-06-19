@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+
+	"github.com/sabujislam/figgen/internal/telemetry"
 )
 
 type OpenAIProvider struct {
@@ -32,7 +34,15 @@ type openAIResponse struct {
 		Message struct {
 			Content string `json:"content"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
+	Usage struct {
+		PromptTokens        int `json:"prompt_tokens"`
+		CompletionTokens    int `json:"completion_tokens"`
+		PromptTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"prompt_tokens_details"`
+	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error,omitempty"`
@@ -50,19 +60,27 @@ func NewOpenAIProvider(modelName string) (*OpenAIProvider, error) {
 	}, nil
 }
 
-func (o *OpenAIProvider) GenerateJSON(ctx context.Context, prompt string) (string, error) {
+func (o *OpenAIProvider) GenerateJSON(ctx context.Context, req GenerateRequest) (*GenerateResult, error) {
+	maxTokens := req.MaxOutputTokens
+	if maxTokens == 0 {
+		maxTokens = 8192
+	}
+
+	// System message carries the static prefix first; OpenAI automatically
+	// caches identical prompt prefixes over ~1k tokens server-side.
 	reqBody := openAIRequest{
 		Model: o.model,
 		Messages: []openAIMessage{
-			{Role: "system", Content: "You are an expert AI software architect and coder. You MUST respond with ONLY valid JSON."},
-			{Role: "user", Content: prompt},
+			{Role: "system", Content: req.StaticPrefix},
+			{Role: "user", Content: req.Dynamic},
 		},
-		MaxTokens: 8192,
+		ResponseFormat: map[string]interface{}{"type": "json_object"},
+		MaxTokens:      maxTokens,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	baseURL := os.Getenv("OPENAI_BASE_URL")
@@ -71,39 +89,54 @@ func (o *OpenAIProvider) GenerateJSON(ctx context.Context, prompt string) (strin
 	}
 	reqURL := baseURL + "/chat/completions"
 
-	fmt.Printf("DEBUG: Using baseURL: %s\n", baseURL)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(jsonData))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+o.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
 
 	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("openai request failed: %w", err)
+		return nil, fmt.Errorf("openai request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	var resData openAIResponse
 	if err := json.Unmarshal(bodyBytes, &resData); err != nil {
-		return "", fmt.Errorf("failed to parse openai response: %w", err)
+		return nil, fmt.Errorf("failed to parse openai response: %w", err)
 	}
 
 	if resData.Error != nil {
-		return "", fmt.Errorf("openai error: %s", resData.Error.Message)
+		return nil, fmt.Errorf("openai error: %s", resData.Error.Message)
 	}
 
 	if len(resData.Choices) == 0 {
-		return "", fmt.Errorf("no response choices from OpenAI")
+		return nil, fmt.Errorf("no response choices from OpenAI")
 	}
 
-	return CleanJSONResponse(resData.Choices[0].Message.Content), nil
+	usage := Usage{
+		InputTokens:  resData.Usage.PromptTokens,
+		OutputTokens: resData.Usage.CompletionTokens,
+		CachedTokens: resData.Usage.PromptTokensDetails.CachedTokens,
+	}
+
+	telemetry.Add(telemetry.Record{
+		Stage: req.Stage, Label: req.Label, Provider: "openai", Model: o.model,
+		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CachedTokens: usage.CachedTokens,
+	})
+
+	finishReason := resData.Choices[0].FinishReason
+	return &GenerateResult{
+		Text:         CleanJSONResponse(resData.Choices[0].Message.Content),
+		Usage:        usage,
+		Truncated:    finishReason == "length",
+		FinishReason: finishReason,
+	}, nil
 }

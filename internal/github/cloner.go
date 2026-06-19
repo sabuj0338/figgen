@@ -69,3 +69,35 @@ func CloneRepository(url string, destPath string) error {
 
 	return nil
 }
+
+// BootstrapDependencies runs the package manager's install command in destPath
+// when dependencies have not been installed yet (no node_modules directory).
+// This ensures downstream steps like `shadcn add` and prettier can run.
+func BootstrapDependencies(destPath string, pkgManager string) error {
+	if pkgManager == "" {
+		pkgManager = "pnpm"
+	}
+
+	nodeModules := filepath.Join(destPath, "node_modules")
+	if _, err := os.Stat(nodeModules); err == nil {
+		return nil // dependencies already installed
+	}
+
+	// Only attempt an install if this actually looks like a JS project.
+	if _, err := os.Stat(filepath.Join(destPath, "package.json")); err != nil {
+		return nil
+	}
+
+	fmt.Printf("Installing boilerplate dependencies with %s...\n", pkgManager)
+
+	cmd := exec.Command(pkgManager, "install")
+	cmd.Dir = destPath
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to install boilerplate dependencies (%s): %w", pkgManager, err)
+	}
+
+	return nil
+}
